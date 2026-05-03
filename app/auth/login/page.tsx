@@ -70,7 +70,7 @@ function LoginPage() {
 
         // Redirect based on role (optional improvement)
         if (user?.role === "DOCTOR") {
-          router.push("/doctor/dashboard");
+          router.push("/");
         } else {
           router.push("/");
         }

@@ -103,8 +103,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         role,
         nextStep:
           role === "DOCTOR"
-            ? "/doctor/profile/setup"
-            : "/patient/profile/setup",
+            ? "/auth/login"
+            : "/auth/login",
         message: "Signup successful. Complete your profile.",
       },
       { status: 201 }

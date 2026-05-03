@@ -13,18 +13,18 @@ class RedisClient {
     return this.clientConnected;
   }
 
-  async get(key: string) {
+  // ✅ NO JSON.parse
+  async get<T = any>(key: string): Promise<T | null> {
     const data = await this.client.get(key);
-    return data ? JSON.parse(data as string) : null;
+    return data as T | null;
   }
 
+  // ✅ NO JSON.stringify
   async set(key: string, value: any, duration?: number) {
-    const stringValue = JSON.stringify(value);
-
     if (duration !== undefined) {
-      await this.client.set(key, stringValue, { ex: duration });
+      await this.client.set(key, value, { ex: duration });
     } else {
-      await this.client.set(key, stringValue);
+      await this.client.set(key, value);
     }
   }
 

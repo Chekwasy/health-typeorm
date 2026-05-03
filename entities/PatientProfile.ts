@@ -2,25 +2,17 @@ import {
   Entity,
   PrimaryColumn,
   Column,
-  OneToOne,
-  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from "typeorm";
-import { Profile } from "./Profile";
 
 export type Gender = "MALE" | "FEMALE" | "OTHER";
 
 @Entity("patient_profiles")
 export class PatientProfile {
-  // SAME ID as Profile (patient)
+  // 🔑 SAME ID as Profile (patient)
   @PrimaryColumn("uuid")
   id!: string;
-
-  // RELATION
-  @OneToOne(() => Profile)
-  @JoinColumn({ name: "id" })
-  patient!: Profile;
 
   @Column({
     type: "enum",

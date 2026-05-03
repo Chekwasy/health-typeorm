@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { Profile } from "@/entities/Profile";
 import { Appointment } from "@/entities/Appointment";
+import { In } from "typeorm";
 
 export async function GET(req: Request) {
   try {
@@ -12,17 +13,20 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
 
-    const page = parseInt(searchParams.get("page") || "1");
+    const page = Math.max(
+      1,
+      parseInt(searchParams.get("page") || "1")
+    );
     const limit = 5;
     const skip = (page - 1) * limit;
 
     // AUTH
-    let decoded;
+    let decoded: any;
     try {
       decoded = await requireAuth(req);
     } catch (err: any) {
       return NextResponse.json(
-        { message: err.message },
+        { message: err.message || "Unauthorized" },
         { status: 401 }
       );
     }
@@ -33,9 +37,10 @@ export async function GET(req: Request) {
     const appointmentRepo =
       dbClient.client.getRepository(Appointment);
 
-    // ensure PATIENT
+    // Ensure PATIENT
     const profile = await profileRepo.findOne({
       where: { id: patient_id },
+      select: ["id", "role"],
     });
 
     if (!profile || profile.role !== "PATIENT") {
@@ -45,13 +50,12 @@ export async function GET(req: Request) {
       );
     }
 
-    // FETCH APPOINTMENTS WITH RELATIONS
+    // FETCH APPOINTMENTS (ONLY SLOT RELATION)
     const [appointments, total] =
       await appointmentRepo.findAndCount({
         where: { patient_id },
         relations: {
-          doctor: true,
-          slot: true,
+          slot: true, 
         },
         order: {
           created_at: "DESC",
@@ -60,24 +64,42 @@ export async function GET(req: Request) {
         take: limit,
       });
 
-    // FORMAT RESPONSE
-    const formatted = appointments.map((a) => ({
-      id: a.id,
-      reason: a.reason,
-      status: a.status,
-      created_at: a.created_at,
+    // 🔥 FETCH DOCTORS SEPARATELY
+    const doctorIds = [
+      ...new Set(appointments.map((a) => a.doctor_id)),
+    ];
 
-      doctor: a.doctor
-        ? `${a.doctor.title ? a.doctor.title + " " : ""}${a.doctor.first_name} ${a.doctor.last_name}`
-        : null,
 
-      slot: a.slot
-        ? {
-            start_time: a.slot.start_time,
-            end_time: a.slot.end_time,
-          }
-        : null,
-    }));
+const doctors = await profileRepo.findBy({
+  id: In(doctorIds),
+});
+
+    // 🔥 FORMAT RESPONSE
+    const formatted = appointments.map((a) => {
+      const doc = doctors.find(
+        (d) => d.id === a.doctor_id
+      );
+
+      return {
+        id: a.id,
+        reason: a.reason,
+        status: a.status,
+        created_at: a.created_at?.toISOString(),
+
+        doctor: doc
+          ? `${doc.title ? doc.title + " " : ""}${doc.first_name} ${doc.last_name}`
+          : null,
+
+        slot: a.slot
+          ? {
+              start_time:
+                a.slot.start_time?.toISOString(),
+              end_time:
+                a.slot.end_time?.toISOString(),
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json(
       {
@@ -91,17 +113,17 @@ export async function GET(req: Request) {
           page,
           limit,
           total,
-          total_pages: total
-            ? Math.ceil(total / limit)
-            : 0,
+          total_pages:
+            total > 0 ? Math.ceil(total / limit) : 0,
         },
       },
       { status: 200 }
     );
   } catch (err: any) {
-    console.error(err);
+    console.error("PATIENT APPOINTMENTS ERROR:", err);
+
     return NextResponse.json(
-      { message: "Server error" },
+      { message: err.message || "Server error" },
       { status: 500 }
     );
   }

@@ -57,11 +57,29 @@ export default function Nav() {
 
   if (!isInitialized) return null;
 
-  const handleLogout = () => {
-    Cookies.remove("access_token");
-    dispatch(logout());
-    router.push("/auth/login");
-  };
+  const handleLogout = async () => {
+  try {
+    const token = Cookies.get("access_token");
+
+    if (token) {
+      await axios.post(
+        "/api/auth/logout",
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+    }
+  } catch (err) {
+    console.error("Logout error", err);
+  }
+
+  Cookies.remove("access_token"); // clear client
+  dispatch(logout());
+  router.push("/auth/login");
+};
 
   const isDoctor = me?.role === "DOCTOR";
 

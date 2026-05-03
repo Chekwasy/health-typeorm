@@ -2,25 +2,16 @@ import {
   Entity,
   PrimaryColumn,
   Column,
-  OneToOne,
-  JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
 } from "typeorm";
-import { Profile } from "./Profile";
 
 @Entity("doctor_profiles")
 export class DoctorProfile {
-  // SAME ID as Profile (doctor)
+  // 🔑 SAME ID as Profile
   @PrimaryColumn("uuid")
   id!: string;
 
-  // RELATION (important)
-  @OneToOne(() => Profile)
-  @JoinColumn({ name: "id" })
-  doctor!: Profile;
-
-  // SPECIALTY
   @Column({ nullable: true })
   specialty!: string;
 

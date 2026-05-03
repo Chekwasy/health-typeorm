@@ -4,13 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
-  OneToMany,
-  OneToOne,
 } from "typeorm";
-import { DoctorSlot } from "./DoctorSlot";
-import { Appointment } from "./Appointment";
-import { DoctorProfile } from "./DoctorProfile";
-import { PatientProfile } from "./PatientProfile";
 
 export type UserRole = "DOCTOR" | "PATIENT";
 
@@ -22,8 +16,7 @@ export class Profile {
   @Column({ unique: true })
   email!: string;
 
-  // PASSWORD FIELD
-  @Column({ select: false }) // very important (security)
+  @Column({ select: false })
   password!: string;
 
   @Column({ nullable: true })
@@ -52,26 +45,4 @@ export class Profile {
 
   @UpdateDateColumn()
   updated_at!: Date;
-
-  // RELATIONS
-
-  // Doctor → Slots
-  @OneToMany(() => DoctorSlot, (slot) => slot.doctor)
-  doctorSlots!: DoctorSlot[];
-
-  // Doctor → Appointments
-  @OneToMany(() => Appointment, (a) => a.doctor)
-  doctorAppointments!: Appointment[];
-
-  // Patient → Appointments
-  @OneToMany(() => Appointment, (a) => a.patient)
-  patientAppointments!: Appointment[];
-
-  // Doctor Profile (1:1)
-  @OneToOne(() => DoctorProfile, (dp) => dp.doctor)
-  doctorProfile!: DoctorProfile;
-
-  // Patient Profile (1:1)
-  @OneToOne(() => PatientProfile, (pp) => pp.patient)
-  patientProfile!: PatientProfile;
 }

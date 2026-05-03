@@ -49,7 +49,7 @@ export async function GET(request: Request): Promise<NextResponse> {
           title: profile.title,
           phone: profile.phone,
           role: profile.role,
-          created_at: profile.created_at,
+          created_at: profile.created_at?.toISOString(),
         },
       },
       { status: 200 }
