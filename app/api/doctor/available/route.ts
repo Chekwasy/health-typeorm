@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { DoctorSlot } from "@/entities/DoctorSlot";
 import { Profile } from "@/entities/Profile";
 import { DoctorProfile } from "@/entities/DoctorProfile";
-import { In } from "typeorm"; // ✅ NEW
+import { In } from "typeorm";
 
 export async function GET(req: Request) {
   try {
@@ -26,31 +26,84 @@ export async function GET(req: Request) {
 
     const now = new Date();
 
-    // BASE QUERY
-    const qb = slotRepo
-      .createQueryBuilder("slot")
-      .where("slot.is_booked = false")
-      .andWhere("slot.start_time > :now", { now });
+    let slots: DoctorSlot[] = [];
+    let message: string | null = null;
 
-    // DATE FILTER
+    // Helper → check Sunday
+    const isSunday = (d: Date) => d.getDay() === 0;
+
+    // PRIMARY QUERY
+    const runQuery = async (start?: Date, end?: Date) => {
+      const qb = slotRepo
+        .createQueryBuilder("slot")
+        .where("slot.is_booked = false")
+        .andWhere("slot.start_time > :now", { now });
+
+      if (start && end) {
+        qb.andWhere(
+          "slot.start_time BETWEEN :start AND :end",
+          { start, end }
+        );
+      }
+
+      return await qb
+        .orderBy("slot.start_time", "ASC")
+        .getMany();
+    };
+
+    // CASE 1: DATE PROVIDED
     if (date) {
-      const startOfDay = new Date(`${date}T00:00:00.000Z`);
-      const endOfDay = new Date(`${date}T23:59:59.999Z`);
+      const selectedDate = new Date(`${date}T00:00:00.000Z`);
 
-      qb.andWhere("slot.start_time BETWEEN :start AND :end", {
-        start: startOfDay,
-        end: endOfDay,
-      });
+      if (isSunday(selectedDate)) {
+        message =
+          "No availability on Sunday. Showing next 3 days availability.";
+
+        const next3Days = new Date(
+          now.getTime() + 72 * 60 * 60 * 1000
+        );
+
+        slots = await runQuery(now, next3Days);
+      } else {
+        const startOfDay = new Date(`${date}T00:00:00.000Z`);
+        const endOfDay = new Date(`${date}T23:59:59.999Z`);
+
+        slots = await runQuery(startOfDay, endOfDay);
+
+        // FALLBACK
+        if (!slots.length) {
+          message =
+            "No doctors available for selected date. Showing next 3 days availability.";
+
+          const next3Days = new Date(
+            now.getTime() + 72 * 60 * 60 * 1000
+          );
+
+          slots = await runQuery(now, next3Days);
+        }
+      }
+    } else {
+      // DEFAULT LOAD
+      if (isSunday(now)) {
+        message =
+          "No availability on Sunday. Showing next 3 days availability.";
+
+        const next3Days = new Date(
+          now.getTime() + 72 * 60 * 60 * 1000
+        );
+
+        slots = await runQuery(now, next3Days);
+      } else {
+        slots = await runQuery();
+      }
     }
 
-    const slots = await qb
-      .orderBy("slot.start_time", "ASC")
-      .getMany();
-
+    // STILL EMPTY (edge case)
     if (!slots.length) {
       return NextResponse.json(
         {
           doctors: [],
+          message: message || "No availability found",
           pagination: {
             page,
             total: 0,
@@ -73,37 +126,24 @@ export async function GET(req: Request) {
 
     const doctorIds = Object.keys(grouped);
 
-    // PAGINATE DOCTORS
     const paginatedDoctorIds = doctorIds.slice(
       skip,
       skip + limit
     );
 
-    // FETCH RELATED DATA (UPDATED)
     const profiles = await profileRepo.find({
-      where: {
-        id: In(paginatedDoctorIds),
-      },
+      where: { id: In(paginatedDoctorIds) },
     });
 
     const doctorProfiles = await doctorProfileRepo.find({
-      where: {
-        id: In(paginatedDoctorIds),
-      },
+      where: { id: In(paginatedDoctorIds) },
     });
 
-    // BUILD RESPONSE
     const doctors = paginatedDoctorIds.map((id) => {
       const doc = profiles.find((p) => p.id === id);
       const extra = doctorProfiles.find((d) => d.id === id);
 
       const doctorSlots = grouped[id] || [];
-
-      const firstFew = doctorSlots.slice(0, 3);
-      const lastFew =
-        doctorSlots.length > 3
-          ? doctorSlots.slice(-3)
-          : [];
 
       return {
         doctor_id: id,
@@ -112,8 +152,11 @@ export async function GET(req: Request) {
         experience: extra?.years_of_experience || null,
 
         preview_slots: {
-          first: firstFew,
-          last: lastFew,
+          first: doctorSlots.slice(0, 3),
+          last:
+            doctorSlots.length > 3
+              ? doctorSlots.slice(-3)
+              : [],
         },
       };
     });
@@ -121,6 +164,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         doctors,
+        message, // NEW
         pagination: {
           page,
           total: doctorIds.length,

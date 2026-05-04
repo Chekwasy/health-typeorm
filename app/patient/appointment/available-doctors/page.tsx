@@ -12,7 +12,9 @@ export default function BookDoctorPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // selected doctor
+  // NEW
+  const [message, setMessage] = useState<string | null>(null);
+
   const [selectedDoctorId, setSelectedDoctorId] =
     useState<string | null>(null);
 
@@ -29,9 +31,13 @@ export default function BookDoctorPage() {
 
       setDoctors(res.data.doctors || []);
       setTotalPages(res.data.pagination?.total_pages || 0);
+
+      // NEW: capture backend message
+      setMessage(res.data.message || null);
     } catch (err) {
       console.error(err);
       setDoctors([]);
+      setMessage("Failed to load doctors");
     } finally {
       setLoading(false);
     }
@@ -56,10 +62,8 @@ export default function BookDoctorPage() {
           Book an Appointment
         </h1>
 
-        {/* IF DOCTOR IS SELECTED → SHOW SLOTS */}
         {selectedDoctorId ? (
           <>
-            {/* BACK BUTTON */}
             <div className="mb-6 text-center">
               <button
                 onClick={() => setSelectedDoctorId(null)}
@@ -69,13 +73,12 @@ export default function BookDoctorPage() {
               </button>
             </div>
 
-            {/* DOCTOR SLOTS COMPONENT */}
             <DoctorSlots doctorId={selectedDoctorId} />
           </>
         ) : (
           <>
             {/* FILTER */}
-            <div className="flex justify-center gap-3 mb-8 flex-wrap">
+            <div className="flex justify-center gap-3 mb-6 flex-wrap">
               <input
                 type="date"
                 className="p-2 rounded bg-white/20"
@@ -97,6 +100,13 @@ export default function BookDoctorPage() {
               </button>
             </div>
 
+            {/* MESSAGE FROM BACKEND */}
+            {message && (
+              <div className="mb-6 text-center bg-yellow-500/20 border border-yellow-400 text-yellow-200 p-3 rounded">
+                {message}
+              </div>
+            )}
+
             {/* LOADING */}
             {loading && (
               <p className="text-center text-gray-300">
@@ -110,13 +120,15 @@ export default function BookDoctorPage() {
                 <h2 className="text-xl mb-2">
                   No doctors available
                 </h2>
+
                 <p className="text-gray-300">
-                  Try selecting another date or check back later.
+                  {message ||
+                    "Try selecting another date or check back later."}
                 </p>
               </div>
             )}
 
-            {/* DOCTOR CARDS */}
+            {/* DOCTORS */}
             {doctors.length > 0 && (
               <div className="grid md:grid-cols-2 gap-6">
                 {doctors.map((doc) => (
@@ -127,18 +139,16 @@ export default function BookDoctorPage() {
                     }
                     className="bg-white/10 p-6 rounded-xl cursor-pointer hover:scale-[1.02] transition border border-transparent hover:border-green-500"
                   >
-                    {/* NAME */}
                     <h2 className="text-xl font-semibold mb-2">
                       {doc.name}
                     </h2>
 
-                    {/* DETAILS */}
                     <p className="text-gray-300 text-sm">
                       {doc.specialty || "General"} •{" "}
                       {doc.experience || 0} yrs experience
                     </p>
 
-                    {/* SLOT PREVIEW */}
+                    {/* EARLY */}
                     <div className="mt-4">
                       <p className="text-sm text-gray-400 mb-1">
                         Early Slots:
@@ -163,6 +173,7 @@ export default function BookDoctorPage() {
                       </div>
                     </div>
 
+                    {/* LATE */}
                     <div className="mt-3">
                       <p className="text-sm text-gray-400 mb-1">
                         Later Slots:
