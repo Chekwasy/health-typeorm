@@ -24,7 +24,7 @@ export async function POST(req: Request) {
     const { interval, blocks } = body;
 
     // AUTH
-    let decoded;
+    let decoded: any;
     try {
       decoded = await requireAuth(req);
     } catch (err: any) {
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     const profileRepo = dbClient.client.getRepository(Profile);
     const slotRepo = dbClient.client.getRepository(DoctorSlot);
 
-    // CHECK ROLE
+    // ROLE CHECK
     const profile = await profileRepo.findOne({
       where: { id: userId },
     });
@@ -74,9 +74,38 @@ export async function POST(req: Request) {
     }
 
     const now = new Date();
-    const maxTime = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+
+    // START WINDOW → next midnight
+    const startWindow = new Date(now);
+    startWindow.setHours(24, 0, 0, 0); // next day 00:00
+
+    let endWindow = new Date(
+      startWindow.getTime() + 72 * 60 * 60 * 1000
+    );
+
+    // CHECK IF SUNDAY EXISTS IN RANGE
+    const hasSundayInRange = (() => {
+      const temp = new Date(startWindow);
+
+      while (temp <= endWindow) {
+        if (temp.getDay() === 0) return true;
+        temp.setDate(temp.getDate() + 1);
+      }
+
+      return false;
+    })();
+
+    // EXTEND TO 96 HOURS IF SUNDAY EXISTS
+    if (hasSundayInRange) {
+      endWindow = new Date(
+        startWindow.getTime() + 96 * 60 * 60 * 1000
+      );
+    }
 
     const slotsToInsert: Partial<DoctorSlot>[] = [];
+
+    let skippedSunday = false;
+    let validSlotFound = false;
 
     for (const block of blocks) {
       const start = new Date(block.start);
@@ -90,7 +119,7 @@ export async function POST(req: Request) {
         );
       }
 
-      // past time
+      // past
       if (start < now) {
         return NextResponse.json(
           { message: "Cannot schedule in the past" },
@@ -98,10 +127,10 @@ export async function POST(req: Request) {
         );
       }
 
-      // beyond 72 hours
-      if (end > maxTime) {
+      // outside window
+      if (start < startWindow || end > endWindow) {
         return NextResponse.json(
-          { message: "Schedule exceeds 72 hours window" },
+          { message: "Schedule outside allowed window" },
           { status: 400 }
         );
       }
@@ -110,37 +139,52 @@ export async function POST(req: Request) {
       let current = new Date(start);
 
       while (current < end) {
-        const slotEnd = new Date(current.getTime() + interval * 60000);
+        const slotEnd = new Date(
+          current.getTime() + interval * 60000
+        );
 
         if (slotEnd > end) break;
 
-        slotsToInsert.push({
-          doctor_id: userId,
-          start_time: current,
-          end_time: slotEnd,
-          is_booked: false,
-        });
+        // SKIP SUNDAY
+        if (current.getDay() === 0) {
+          skippedSunday = true;
+        } else {
+          validSlotFound = true;
+
+          slotsToInsert.push({
+            doctor_id: userId,
+            start_time: new Date(current),
+            end_time: new Date(slotEnd),
+            is_booked: false,
+          });
+        }
 
         current = slotEnd;
       }
     }
 
-    if (slotsToInsert.length === 0) {
+    // ALL WERE SUNDAY
+    if (!validSlotFound) {
       return NextResponse.json(
-        { message: "No valid slots generated" },
+        {
+          message: "Sundays cannot be scheduled",
+        },
         { status: 400 }
       );
     }
 
-    // INSERT using TypeORM
+    // INSERT
     await slotRepo.save(slotsToInsert);
 
     return NextResponse.json({
-      message: "Schedule created successfully",
+      message: skippedSunday
+        ? "Schedule created. Sunday slots were skipped."
+        : "Schedule created successfully",
       slots_created: slotsToInsert.length,
     });
   } catch (err) {
-    console.error(err);
+    console.error("SCHEDULE ERROR:", err);
+
     return NextResponse.json(
       { message: "Server error" },
       { status: 500 }

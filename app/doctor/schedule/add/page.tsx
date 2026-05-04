@@ -17,9 +17,18 @@ export default function AddSchedule() {
     setBlocks([...blocks, { start: "", end: "" }]);
   };
 
-  const handleChange = (i: number, field: string, value: string) => {
+  const removeBlock = (index: number) => {
+    const updated = blocks.filter((_, i) => i !== index);
+    setBlocks(updated.length ? updated : [{ start: "", end: "" }]);
+  };
+
+  const handleChange = (
+    i: number,
+    field: "start" | "end",
+    value: string
+  ) => {
     const updated = [...blocks];
-    updated[i][field as "start" | "end"] = value;
+    updated[i][field] = value;
     setBlocks(updated);
   };
 
@@ -27,9 +36,14 @@ export default function AddSchedule() {
     try {
       const token = Cookies.get("access_token");
 
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
+
       const loading = toast.loading("Creating schedule...");
 
-      await axios.post(
+      const res = await axios.post(
         "/api/doctor/schedule/add",
         {
           interval,
@@ -42,10 +56,18 @@ export default function AddSchedule() {
         }
       );
 
-      toast.success("Schedule created 🎉", { id: loading });
+      toast.success(res.data.message || "Schedule created 🎉", {
+        id: loading,
+      });
+
       router.push("/doctor/schedule/view");
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || "Error");
+      toast.dismiss();
+
+      toast.error(
+        err?.response?.data?.message ||
+          "Failed to create schedule"
+      );
     }
   };
 
@@ -60,45 +82,99 @@ export default function AddSchedule() {
       <Nav />
 
       <div className="pt-24 max-w-xl mx-auto text-white px-4">
-        <h1 className="text-2xl font-bold mb-4">Add Schedule</h1>
+        <h1 className="text-2xl font-bold mb-4">
+          Add Schedule
+        </h1>
 
         {/* GUIDE */}
         <div className="bg-white/10 p-4 rounded mb-6 text-sm text-gray-300">
           <p className="font-semibold text-white mb-2">
-            How to create your schedule:
+            How scheduling works:
           </p>
-          <ul className="list-disc pl-5 space-y-1">
-            <li>Select how long each appointment should take</li>
-            <li>Pick a start time and end time for your availability</li>
-            <li>Add multiple blocks if you want breaks in between</li>
-            <li>Make sure your schedule is within the next 72 hours</li>
+
+          <ul className="list-disc pl-5 space-y-2">
+            <li>
+              Choose how long each appointment should last
+              (15, 30, or 60 minutes)
+            </li>
+
+            <li>
+              Add one or more availability blocks (e.g. 9:00am
+              → 12:00pm)
+            </li>
+
+            <li>
+              Your schedule must start from{" "}
+              <span className="text-white font-semibold">
+                tomorrow (00:00)
+              </span>{" "}
+              and within the next{" "}
+              <span className="text-white font-semibold">
+                72 hours
+              </span>
+            </li>
+
+            <li>
+              If a Sunday falls within that range, the system
+              extends the window to{" "}
+              <span className="text-white font-semibold">
+                96 hours
+              </span>{" "}
+              automatically
+            </li>
+
+            <li className="text-red-400">
+              Sundays are NOT allowed — any Sunday slots will
+              be skipped
+            </li>
+
+            <li>
+              If all your selected times fall on Sunday, your
+              schedule will be rejected
+            </li>
+
+            <li>
+              You can add multiple blocks to create breaks
+              between sessions
+            </li>
           </ul>
         </div>
 
         {/* INTERVAL */}
-        <label className="block mb-1 text-sm">Select Interval</label>
+        <label className="block mb-1 text-sm">
+          Select Interval
+        </label>
         <select
           className="w-full mb-6 p-3 rounded bg-white/20 text-black"
           value={interval}
           onChange={(e) => setInterval(Number(e.target.value))}
         >
-          <option value={15} className="text-black">
-            15 mins
-          </option>
-          <option value={30} className="text-black">
-            30 mins
-          </option>
-          <option value={60} className="text-black">
-            1 hour
-          </option>
+          <option value={15}>15 mins</option>
+          <option value={30}>30 mins</option>
+          <option value={60}>1 hour</option>
         </select>
 
         {/* BLOCKS */}
         {blocks.map((b, i) => (
-          <div key={i} className="mb-6 bg-white/10 p-4 rounded">
-            <p className="mb-2 font-semibold">Block {i + 1}</p>
+          <div
+            key={i}
+            className="mb-6 bg-white/10 p-4 rounded relative"
+          >
+            <p className="mb-2 font-semibold">
+              Block {i + 1}
+            </p>
 
-            {/* START TIME */}
+            {/* REMOVE BUTTON */}
+            {blocks.length > 1 && (
+              <button
+                onClick={() => removeBlock(i)}
+                className="absolute top-2 right-2 text-red-400 text-sm"
+              >
+                ✕
+              </button>
+            )}
+
+            {/* START */}
             <label className="block text-sm mb-1">
               Start Time
             </label>
@@ -111,7 +187,7 @@ export default function AddSchedule() {
               }
             />
 
-            {/* END TIME */}
+            {/* END */}
             <label className="block text-sm mb-1">
               End Time
             </label>
