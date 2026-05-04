@@ -6,6 +6,7 @@ import { requireAuth } from "@/lib/auth";
 import { Profile } from "@/entities/Profile";
 import { DoctorSlot } from "@/entities/DoctorSlot";
 import { Appointment } from "@/entities/Appointment";
+import { In } from "typeorm";
 
 interface Body {
   slot_id: string;
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
     }
 
     // AUTH
-    let decoded;
+    let decoded: any;
     try {
       decoded = await requireAuth(req);
     } catch (err: any) {
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
     const appointmentRepo =
       dbClient.client.getRepository(Appointment);
 
-    // ensure PATIENT role
+    // ensure PATIENT
     const profile = await profileRepo.findOne({
       where: { id: patient_id },
     });
@@ -60,6 +61,26 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { message: "Complete profile first" },
         { status: 403 }
+      );
+    }
+
+    // RULE 1: MAX 4 BOOKINGS
+    const now = new Date();
+
+    const activeAppointmentsCount = await appointmentRepo
+      .createQueryBuilder("a")
+      .innerJoin("doctor_slots", "s", "s.id = a.slot_id")
+      .where("a.patient_id = :patient_id", { patient_id })
+      .andWhere("a.status IN (:...statuses)", {
+        statuses: ["PENDING", "CONFIRMED"],
+      })
+      .andWhere("s.start_time > :now", { now })
+      .getCount();
+
+    if (activeAppointmentsCount >= 4) {
+      return NextResponse.json(
+        { message: "Maximum of 4 active bookings allowed" },
+        { status: 400 }
       );
     }
 
@@ -83,8 +104,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // prevent past booking
-    const now = new Date();
+    // past booking
+    // const now = new Date();
     if (slot.start_time < now) {
       return NextResponse.json(
         { message: "Cannot book past slot" },
@@ -92,20 +113,56 @@ export async function POST(req: Request) {
       );
     }
 
-    // STEP 1: CREATE APPOINTMENT
+    // RULE 2: PREVENT TIME CONFLICT
+    // get patient appointments
+    const patientAppointments =
+      await appointmentRepo.find({
+        where: {
+          patient_id,
+          status: In(["PENDING", "CONFIRMED"]),
+        },
+        relations: {
+          slot: true,
+        },
+      });
+
+    const hasConflict = patientAppointments.some((a) => {
+      if (!a.slot) return false;
+
+      const existingStart = a.slot.start_time;
+      const existingEnd = a.slot.end_time;
+
+      // overlap condition
+      return (
+        slot.start_time < existingEnd &&
+        slot.end_time > existingStart
+      );
+    });
+
+    if (hasConflict) {
+      return NextResponse.json(
+        {
+          message:
+            "You already have a booking at this time",
+        },
+        { status: 400 }
+      );
+    }
+
+    // CREATE APPOINTMENT
     const appointment = appointmentRepo.create({
       doctor_id: slot.doctor_id,
       patient_id,
       slot_id,
       reason,
-      status: "PENDING",
+      status: "CONFIRMED", // auto-confirm for simplicity
     });
 
     const savedAppointment = await appointmentRepo.save(
       appointment
     );
 
-    // STEP 2: LOCK SLOT
+    // LOCK SLOT
     slot.is_booked = true;
     await slotRepo.save(slot);
 
@@ -116,8 +173,9 @@ export async function POST(req: Request) {
       },
       { status: 200 }
     );
-  } catch (err) {
-    console.error(err);
+  } catch (err: any) {
+    console.error("BOOKING ERROR:", err);
+
     return NextResponse.json(
       { message: "Server error" },
       { status: 500 }
