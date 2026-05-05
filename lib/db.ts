@@ -11,11 +11,9 @@ let AppDataSource: DataSource;
 if (!(global as any).AppDataSource) {
   AppDataSource = new DataSource({
     type: "postgres",
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT || 5432),
-    username: process.env.DB_USERNAME,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME,
+
+    // USE DATABASE_URL (Neon)
+    url: process.env.DATABASE_URL,
 
     entities: [
       Profile,
@@ -25,10 +23,10 @@ if (!(global as any).AppDataSource) {
       PatientProfile,
     ],
 
-    synchronize: true, // dev only
+    synchronize: true, // keep only for dev
     logging: false,
 
-    // future-safe (for production later)
+    // REQUIRED FOR NEON
     ssl:
       process.env.NODE_ENV === "production"
         ? { rejectUnauthorized: false }
