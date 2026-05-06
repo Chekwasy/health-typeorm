@@ -4,6 +4,7 @@ import Nav from "@/app/components/nav";
 import DoctorSlots from "@/app/components/DoctorSlots";
 import { useEffect, useState } from "react";
 import axios from "axios";
+import toast from "react-hot-toast";
 
 export default function BookDoctorPage() {
   const [doctors, setDoctors] = useState<any[]>([]);
@@ -34,10 +35,12 @@ export default function BookDoctorPage() {
 
       // NEW: capture backend message
       setMessage(res.data.message || null);
+      toast.success(res.data.message || "Doctors loaded");
     } catch (err) {
       console.error(err);
       setDoctors([]);
       setMessage("Failed to load doctors");
+      toast.error("Failed to load doctors");
     } finally {
       setLoading(false);
     }
