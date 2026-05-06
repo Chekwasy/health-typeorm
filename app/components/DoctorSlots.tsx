@@ -24,7 +24,7 @@ export default function DoctorSlots({
 
   const [reason, setReason] = useState("");
 
-  // 🔥 FETCH SLOTS
+  // FETCH SLOTS
   const fetchSlots = async () => {
     try {
       setLoading(true);
@@ -39,9 +39,11 @@ export default function DoctorSlots({
       setSlots(res.data.slots || []);
       setDoctor(res.data.doctor || null);
       setTotalPages(res.data.pagination?.total_pages || 0);
+      toast.success(res.data.message || "Slots loaded");
     } catch (err) {
       console.error(err);
       setSlots([]);
+      toast.error("Failed to load slots");
     } finally {
       setLoading(false);
     }
@@ -51,7 +53,7 @@ export default function DoctorSlots({
     if (doctorId) fetchSlots();
   }, [doctorId, date, page]);
 
-  // 🔥 BOOK SLOT
+  // BOOK SLOT
   const handleBooking = async () => {
     if (!selectedSlot) {
       toast.error("Please select a slot");
