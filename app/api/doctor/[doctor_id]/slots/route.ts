@@ -5,15 +5,12 @@ import { NextResponse } from "next/server";
 import { DoctorSlot } from "@/entities/DoctorSlot";
 import { Profile } from "@/entities/Profile";
 import { DoctorProfile } from "@/entities/DoctorProfile";
-import { In } from "typeorm";
 
 export async function GET(req: Request) {
   try {
     await dbClient.init();
 
     const url = new URL(req.url);
-
-    // safer path extraction
     const parts = url.pathname.split("/");
     const doctor_id = parts[3];
 
@@ -38,12 +35,9 @@ export async function GET(req: Request) {
 
     const now = new Date();
 
-    // GET DOCTOR BASIC INFO
+    // GET DOCTOR
     const profile = await profileRepo.findOne({
-      where: {
-        id: doctor_id,
-        role: "DOCTOR",
-      },
+      where: { id: doctor_id, role: "DOCTOR" },
     });
 
     if (!profile) {
@@ -53,34 +47,81 @@ export async function GET(req: Request) {
       );
     }
 
-    // GET DOCTOR EXTRA INFO
     const extra = await doctorProfileRepo.findOne({
       where: { id: doctor_id },
     });
 
-    // SLOT QUERY
-    const qb = slotRepo
-      .createQueryBuilder("slot")
-      .where("slot.doctor_id = :doctor_id", { doctor_id })
-      .andWhere("slot.is_booked = false")
-      .andWhere("slot.start_time > :now", { now });
+    const isSunday = (d: Date) => d.getDay() === 0;
 
-    // DATE FILTER
+    let message: string | null = null;
+    let slots: DoctorSlot[] = [];
+    let total = 0;
+
+    const baseQuery = () =>
+      slotRepo
+        .createQueryBuilder("slot")
+        .where("slot.doctor_id = :doctor_id", { doctor_id })
+        .andWhere("slot.is_booked = false")
+        .andWhere("slot.start_time > :now", { now });
+
+    // 🔥 CASE 1: DATE PROVIDED
     if (date) {
-      const startOfDay = new Date(`${date}T00:00:00.000Z`);
-      const endOfDay = new Date(`${date}T23:59:59.999Z`);
+      const selectedDate = new Date(`${date}T00:00:00.000Z`);
 
-      qb.andWhere("slot.start_time BETWEEN :start AND :end", {
-        start: startOfDay,
-        end: endOfDay,
-      });
+      if (isSunday(selectedDate)) {
+        message =
+          "No availability on Sunday. Showing next available slots.";
+
+        const qb = baseQuery();
+        [slots, total] = await qb
+          .orderBy("slot.start_time", "ASC")
+          .skip(skip)
+          .take(limit)
+          .getManyAndCount();
+      } else {
+        const start = new Date(`${date}T00:00:00.000Z`);
+        const end = new Date(`${date}T23:59:59.999Z`);
+
+        const qb = baseQuery().andWhere(
+          "slot.start_time BETWEEN :start AND :end",
+          { start, end }
+        );
+
+        [slots, total] = await qb
+          .orderBy("slot.start_time", "ASC")
+          .skip(skip)
+          .take(limit)
+          .getManyAndCount();
+
+        // FALLBACK IF EMPTY
+        if (total === 0) {
+          message =
+            "No slots for selected date. Showing next available slots.";
+
+          const fallbackQb = baseQuery();
+
+          [slots, total] = await fallbackQb
+            .orderBy("slot.start_time", "ASC")
+            .skip(skip)
+            .take(limit)
+            .getManyAndCount();
+        }
+      }
+    } else {
+      // DEFAULT LOAD
+      if (isSunday(now)) {
+        message =
+          "No availability on Sunday. Showing next available slots.";
+      }
+
+      const qb = baseQuery();
+
+      [slots, total] = await qb
+        .orderBy("slot.start_time", "ASC")
+        .skip(skip)
+        .take(limit)
+        .getManyAndCount();
     }
-
-    const [slots, total] = await qb
-      .orderBy("slot.start_time", "ASC")
-      .skip(skip)
-      .take(limit)
-      .getManyAndCount();
 
     return NextResponse.json(
       {
@@ -93,6 +134,7 @@ export async function GET(req: Request) {
         },
 
         slots,
+        message, // IMPORTANT FOR FRONTEND
 
         pagination: {
           page,
@@ -105,6 +147,7 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     console.error(err);
+
     return NextResponse.json(
       { message: "Server error" },
       { status: 500 }
