@@ -8,8 +8,15 @@ import { DoctorProfile } from "@/entities/DoctorProfile";
 
 interface Body {
   specialty?: string;
+
   bio?: string;
+
   years_of_experience?: number;
+
+  /**
+   * SAVE THIS ON Profile TABLE
+   */
+  phone_number?: string;
 }
 
 export async function PATCH(req: Request) {
@@ -18,110 +25,221 @@ export async function PATCH(req: Request) {
 
     const body: Body = await req.json();
 
-    // AUTH
+    /**
+     * =====================================
+     * AUTH
+     * =====================================
+     */
+
     let decoded;
+
     try {
       decoded = await requireAuth(req);
     } catch (err: any) {
       return NextResponse.json(
-        { message: err.message },
-        { status: 401 }
+        {
+          message: err.message,
+        },
+        { status: 401 },
       );
     }
 
     const userId = decoded.userId;
 
     const profileRepo = dbClient.client.getRepository(Profile);
+
     const doctorRepo = dbClient.client.getRepository(DoctorProfile);
 
-    // Ensure user is doctor
+    /**
+     * =====================================
+     * ENSURE USER IS DOCTOR
+     * =====================================
+     */
+
     const profile = await profileRepo.findOne({
-      where: { id: userId },
+      where: {
+        id: userId,
+      },
     });
 
     if (!profile || profile.role !== "DOCTOR") {
       return NextResponse.json(
-        { message: "Only doctors can update profile" },
-        { status: 403 }
+        {
+          message: "Only doctors can update profile",
+        },
+        { status: 403 },
       );
     }
 
-    // Validation + build update object
+    /**
+     * =====================================
+     * VALIDATION
+     * =====================================
+     */
+
     const updates: Partial<DoctorProfile> = {};
 
-    // SPECIALTY
+    /**
+     * SPECIALTY
+     */
+
     if (body.specialty !== undefined) {
-      if (body.specialty.length < 2) {
+      if (body.specialty.trim().length < 2) {
         return NextResponse.json(
-          { message: "Specialty too short" },
-          { status: 400 }
+          {
+            message: "Specialty too short",
+          },
+          { status: 400 },
         );
       }
-      updates.specialty = body.specialty;
+
+      updates.specialty = body.specialty.trim();
     }
 
-    // BIO
+    /**
+     * BIO
+     */
+
     if (body.bio !== undefined) {
-      if (body.bio.length < 10) {
+      if (body.bio.trim().length < 10) {
         return NextResponse.json(
-          { message: "Bio too short" },
-          { status: 400 }
+          {
+            message: "Bio too short",
+          },
+          { status: 400 },
         );
       }
-      updates.bio = body.bio;
+
+      updates.bio = body.bio.trim();
     }
 
-    // EXPERIENCE
+    /**
+     * EXPERIENCE
+     */
+
     if (body.years_of_experience !== undefined) {
       if (body.years_of_experience < 0) {
         return NextResponse.json(
-          { message: "Invalid experience value" },
-          { status: 400 }
+          {
+            message: "Invalid experience value",
+          },
+          { status: 400 },
         );
       }
+
       updates.years_of_experience = body.years_of_experience;
     }
 
-    if (Object.keys(updates).length === 0) {
+    /**
+     * =====================================
+     * PHONE NUMBER
+     * SAVE ONLY TO Profile TABLE
+     * =====================================
+     */
+
+    if (body.phone_number !== undefined) {
+      const normalizedPhone = body.phone_number.replace(/\s+/g, "");
+
+      if (normalizedPhone.length < 7) {
+        return NextResponse.json(
+          {
+            message: "Invalid phone number",
+          },
+          { status: 400 },
+        );
+      }
+
+      /**
+       * SAVE TO PROFILE TABLE
+       */
+      profile.phone = normalizedPhone;
+    }
+
+    /**
+     * ENSURE THERE ARE VALID UPDATES
+     */
+
+    if (Object.keys(updates).length === 0 && body.phone_number === undefined) {
       return NextResponse.json(
-        { message: "No valid fields to update" },
-        { status: 400 }
+        {
+          message: "No valid fields to update",
+        },
+        { status: 400 },
       );
     }
 
-    // Check if doctor profile exists
+    /**
+     * =====================================
+     * FIND PROFILE
+     * =====================================
+     */
+
     let doctorProfile = await doctorRepo.findOne({
-      where: { id: userId },
+      where: {
+        id: userId,
+      },
     });
 
+    /**
+     * =====================================
+     * UPDATE PROFILE
+     * =====================================
+     */
+
     if (doctorProfile) {
-      // UPDATE
       Object.assign(doctorProfile, updates);
+
       await doctorRepo.save(doctorProfile);
-    } else {
-      // CREATE
+    } else if (Object.keys(updates).length > 0) {
+
+    /**
+     * =====================================
+     * CREATE PROFILE
+     * =====================================
+     */
       doctorProfile = doctorRepo.create({
         id: userId,
+
         ...updates,
+
         is_verified: false,
       });
 
       await doctorRepo.save(doctorProfile);
     }
 
-    // Mark profile as complete
+    /**
+     * =====================================
+     * MARK PROFILE COMPLETE
+     * =====================================
+     */
+
     profile.is_profile_complete = true;
+
     await profileRepo.save(profile);
 
-    return NextResponse.json({
-      message: "Doctor profile updated successfully",
-      profileComplete: true,
-    });
+    return NextResponse.json(
+      {
+        message: "Doctor profile updated successfully",
+
+        profileComplete: true,
+
+        data: {
+          profile,
+
+          doctorProfile,
+        },
+      },
+      { status: 200 },
+    );
   } catch (err) {
     console.error(err);
+
     return NextResponse.json(
-      { message: "Server error" },
-      { status: 500 }
+      {
+        message: "Server error",
+      },
+      { status: 500 },
     );
   }
 }

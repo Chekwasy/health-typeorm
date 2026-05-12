@@ -1,222 +1,256 @@
 "use client";
 
 import Nav from "@/app/components/nav";
-import { useState } from "react";
-import axios from "axios";
-import Cookies from "js-cookie";
-import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
+import {
+  CalendarDays,
+  Repeat,
+  Clock3,
+  ArrowRight,
+} from "lucide-react";
 
-export default function AddSchedule() {
+export default function ScheduleTypePage() {
   const router = useRouter();
-
-  const [interval, setInterval] = useState(30);
-  const [blocks, setBlocks] = useState([{ start: "", end: "" }]);
-
-  const addBlock = () => {
-    setBlocks([...blocks, { start: "", end: "" }]);
-  };
-
-  const removeBlock = (index: number) => {
-    const updated = blocks.filter((_, i) => i !== index);
-    setBlocks(updated.length ? updated : [{ start: "", end: "" }]);
-  };
-
-  const handleChange = (
-    i: number,
-    field: "start" | "end",
-    value: string
-  ) => {
-    const updated = [...blocks];
-    updated[i][field] = value;
-    setBlocks(updated);
-  };
-
-  const handleSubmit = async () => {
-    try {
-      const token = Cookies.get("access_token");
-
-      if (!token) {
-        toast.error("Please login again");
-        return;
-      }
-
-      const loading = toast.loading("Creating schedule...");
-
-      const res = await axios.post(
-        "/api/doctor/schedule/add",
-        {
-          interval,
-          blocks,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      toast.success(res.data.message || "Schedule created 🎉", {
-        id: loading,
-      });
-
-      router.push("/doctor/schedule/view");
-    } catch (err: any) {
-      toast.dismiss();
-
-      toast.error(
-        err?.response?.data?.message ||
-          "Failed to create schedule"
-      );
-    }
-  };
 
   return (
     <div
       className="min-h-screen bg-cover bg-center"
       style={{
         backgroundImage:
-          "linear-gradient(rgba(5,15,30,0.9), rgba(5,15,30,0.9)), url('/bg.jpeg')",
+          "linear-gradient(rgba(5,15,30,0.92), rgba(5,15,30,0.96)), url('/bg.jpeg')",
       }}
     >
       <Nav />
 
-      <div className="pt-24 max-w-xl mx-auto text-white px-4">
-        <h1 className="text-2xl font-bold mb-4">
-          Add Schedule
-        </h1>
+      <div className="max-w-6xl mx-auto px-4 pt-24 pb-10 text-white">
+        {/* HERO */}
+        <div className="text-center mb-14">
+          <div className="inline-flex items-center gap-2 bg-green-500/20 text-green-300 border border-green-500/20 px-4 py-2 rounded-full text-sm mb-5">
+            <Clock3 size={16} />
+            Doctor Scheduling System
+          </div>
 
-        {/* GUIDE */}
-        <div className="bg-white/10 p-4 rounded mb-6 text-sm text-gray-300">
-          <p className="font-semibold text-white mb-2">
-            How scheduling works:
+          <h1 className="text-4xl md:text-5xl font-bold mb-5 leading-tight">
+            Choose Your
+            <span className="text-green-400">
+              {" "}
+              Scheduling Style
+            </span>
+          </h1>
+
+          <p className="text-gray-300 max-w-2xl mx-auto text-lg leading-relaxed">
+            Create one-time availability or automate recurring weekly schedules
+            for patients to book appointments seamlessly.
           </p>
-
-          <ul className="list-disc pl-5 space-y-2">
-            <li>
-              Choose how long each appointment should last
-              (15, 30, or 60 minutes)
-            </li>
-
-            <li>
-              Add one or more availability blocks (e.g. 9:00am
-              → 12:00pm)
-            </li>
-
-            <li>
-              Your schedule must start from{" "}
-              <span className="text-white font-semibold">
-                tomorrow (00:00)
-              </span>{" "}
-              and within the next{" "}
-              <span className="text-white font-semibold">
-                72 hours
-              </span>
-            </li>
-
-            <li>
-              If a Sunday falls within that range, the system
-              extends the window to{" "}
-              <span className="text-white font-semibold">
-                96 hours
-              </span>{" "}
-              automatically
-            </li>
-
-            <li className="text-red-400">
-              Sundays are NOT allowed — any Sunday slots will
-              be skipped
-            </li>
-
-            <li>
-              If all your selected times fall on Sunday, your
-              schedule will be rejected
-            </li>
-
-            <li>
-              You can add multiple blocks to create breaks
-              between sessions
-            </li>
-          </ul>
         </div>
 
-        {/* INTERVAL */}
-        <label className="block mb-1 text-sm">
-          Select Interval
-        </label>
-        <select
-          className="w-full mb-6 p-3 rounded bg-white/20 text-black"
-          value={interval}
-          onChange={(e) => setInterval(Number(e.target.value))}
-        >
-          <option value={15}>15 mins</option>
-          <option value={30}>30 mins</option>
-          <option value={60}>1 hour</option>
-        </select>
+        {/* CARDS */}
+        <div className="grid lg:grid-cols-2 gap-8">
+          {/* NON RECURRING */}
+          <div className="bg-white/10 border border-white/10 rounded-3xl p-7 backdrop-blur hover:border-blue-500/40 transition">
+            <div className="w-16 h-16 rounded-2xl bg-blue-500/20 flex items-center justify-center mb-6">
+              <CalendarDays
+                size={32}
+                className="text-blue-400"
+              />
+            </div>
 
-        {/* BLOCKS */}
-        {blocks.map((b, i) => (
-          <div
-            key={i}
-            className="mb-6 bg-white/10 p-4 rounded relative"
-          >
-            <p className="mb-2 font-semibold">
-              Block {i + 1}
+            <h2 className="text-2xl font-bold mb-3">
+              Non-Recurring Schedule
+            </h2>
+
+            <p className="text-gray-300 mb-6 leading-relaxed">
+              Create custom availability manually by selecting exact dates and
+              time ranges. Perfect for temporary schedules, special clinic days,
+              short-term availability, or irregular working hours.
             </p>
 
-            {/* REMOVE BUTTON */}
-            {blocks.length > 1 && (
-              <button
-                onClick={() => removeBlock(i)}
-                className="absolute top-2 right-2 text-red-400 text-sm"
-              >
-                ✕
-              </button>
-            )}
+            {/* FEATURES */}
+            <div className="space-y-3 mb-8">
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-blue-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Select exact dates and time ranges
+                </p>
+              </div>
 
-            {/* START */}
-            <label className="block text-sm mb-1">
-              Start Time
-            </label>
-            <input
-              type="datetime-local"
-              className="w-full mb-3 p-3 rounded bg-white/20 border border-white/20"
-              value={b.start}
-              onChange={(e) =>
-                handleChange(i, "start", e.target.value)
-              }
-            />
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-blue-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Add multiple blocks with breaks in-between
+                </p>
+              </div>
 
-            {/* END */}
-            <label className="block text-sm mb-1">
-              End Time
-            </label>
-            <input
-              type="datetime-local"
-              className="w-full p-3 rounded bg-white/20 border border-white/20"
-              value={b.end}
-              onChange={(e) =>
-                handleChange(i, "end", e.target.value)
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-blue-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Best for changing schedules or special sessions
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-blue-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Supports 15, 30 and 60 minute appointments
+                </p>
+              </div>
+            </div>
+
+            {/* EXAMPLE */}
+            <div className="bg-black/30 border border-white/10 rounded-2xl p-4 mb-8">
+              <p className="text-sm text-gray-400 mb-2">
+                Example:
+              </p>
+
+              <p className="text-sm text-white">
+                Monday May 12 → 9:00am - 12:00pm
+              </p>
+
+              <p className="text-sm text-white">
+                Wednesday May 14 → 2:00pm - 5:00pm
+              </p>
+            </div>
+
+            <button
+              onClick={() =>
+                router.push(
+                  "/doctor/schedule/add-non-recurring"
+                )
               }
-            />
+              className="w-full bg-blue-600 hover:bg-blue-700 transition rounded-2xl py-4 font-semibold flex items-center justify-center gap-2"
+            >
+              Create Non-Recurring Schedule
+              <ArrowRight size={18} />
+            </button>
           </div>
-        ))}
 
-        {/* ADD BLOCK */}
-        <button
-          onClick={addBlock}
-          className="mb-4 bg-gray-600 px-4 py-2 rounded"
-        >
-          + Add Another Time Block
-        </button>
+          {/* RECURRING */}
+          <div className="bg-white/10 border border-white/10 rounded-3xl p-7 backdrop-blur hover:border-green-500/40 transition">
+            <div className="w-16 h-16 rounded-2xl bg-green-500/20 flex items-center justify-center mb-6">
+              <Repeat
+                size={32}
+                className="text-green-400"
+              />
+            </div>
 
-        {/* SUBMIT */}
-        <button
-          onClick={handleSubmit}
-          className="w-full bg-green-600 py-3 rounded font-bold hover:scale-[1.02] transition"
-        >
-          Save Schedule
-        </button>
+            <h2 className="text-2xl font-bold mb-3">
+              Recurring Schedule
+            </h2>
+
+            <p className="text-gray-300 mb-6 leading-relaxed">
+              Automatically generate repeating schedules across selected weekdays
+              for 7, 14 or 30 days. Perfect for doctors with consistent weekly
+              availability.
+            </p>
+
+            {/* FEATURES */}
+            <div className="space-y-3 mb-8">
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-green-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Automatically repeats schedules weekly
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-green-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Select multiple weekdays at once
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-green-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Duplicate and overlapping slots prevented automatically
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-2 h-2 rounded-full bg-green-400 mt-2" />
+                <p className="text-sm text-gray-300">
+                  Best for long-term weekly availability
+                </p>
+              </div>
+            </div>
+
+            {/* EXAMPLE */}
+            <div className="bg-black/30 border border-white/10 rounded-2xl p-4 mb-8">
+              <p className="text-sm text-gray-400 mb-2">
+                Example:
+              </p>
+
+              <p className="text-sm text-white">
+                Every Monday & Wednesday
+              </p>
+
+              <p className="text-sm text-white">
+                9:00am - 12:00pm for the next 30 days
+              </p>
+            </div>
+
+            <button
+              onClick={() =>
+                router.push(
+                  "/doctor/schedule/add-recurring"
+                )
+              }
+              className="w-full bg-green-600 hover:bg-green-700 transition rounded-2xl py-4 font-semibold flex items-center justify-center gap-2"
+            >
+              Create Recurring Schedule
+              <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* FOOTER INFO */}
+        <div className="mt-10 bg-white/10 border border-white/10 rounded-3xl p-6">
+          <h3 className="font-semibold text-xl mb-3">
+            Which should you use?
+          </h3>
+
+          <div className="grid md:grid-cols-2 gap-6 text-sm text-gray-300">
+            <div>
+              <p className="font-semibold text-white mb-2">
+                Use Non-Recurring if:
+              </p>
+
+              <ul className="space-y-2">
+                <li>
+                  • Your availability changes often
+                </li>
+
+                <li>
+                  • You want exact date control
+                </li>
+
+                <li>
+                  • You are scheduling temporary clinic sessions
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="font-semibold text-white mb-2">
+                Use Recurring if:
+              </p>
+
+              <ul className="space-y-2">
+                <li>
+                  • You work fixed weekly schedules
+                </li>
+
+                <li>
+                  • You want automatic slot generation
+                </li>
+
+                <li>
+                  • You want to save time creating schedules
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

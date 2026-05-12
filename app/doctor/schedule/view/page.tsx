@@ -150,6 +150,16 @@ export default function ViewSchedule() {
                       })}
                     </p>
 
+                     {/* DATE */}
+                      <p className="text-sm text-gray-300">
+                        {start.toLocaleDateString([], {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                      </p>
+
                     {/* INTERVAL */}
                     <p className="text-sm text-gray-300 mt-1">
                       Interval: {interval} mins

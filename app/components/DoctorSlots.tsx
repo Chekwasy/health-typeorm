@@ -5,11 +5,7 @@ import axios from "axios";
 import Cookies from "js-cookie";
 import toast from "react-hot-toast";
 
-export default function DoctorSlots({
-  doctorId,
-}: {
-  doctorId: string;
-}) {
+export default function DoctorSlots({ doctorId }: { doctorId: string }) {
   const [slots, setSlots] = useState<any[]>([]);
   const [doctor, setDoctor] = useState<any>(null);
 
@@ -19,8 +15,7 @@ export default function DoctorSlots({
 
   const [loading, setLoading] = useState(false);
 
-  const [selectedSlot, setSelectedSlot] =
-    useState<any>(null);
+  const [selectedSlot, setSelectedSlot] = useState<any>(null);
 
   const [reason, setReason] = useState("");
 
@@ -29,12 +24,9 @@ export default function DoctorSlots({
     try {
       setLoading(true);
 
-      const res = await axios.get(
-        `/api/doctor/${doctorId}/slots`,
-        {
-          params: { page, date },
-        }
-      );
+      const res = await axios.get(`/api/doctor/${doctorId}/slots`, {
+        params: { page, date },
+      });
 
       setSlots(res.data.slots || []);
       setDoctor(res.data.doctor || null);
@@ -68,35 +60,177 @@ export default function DoctorSlots({
     try {
       const token = Cookies.get("access_token");
 
-      const loadingToast = toast.loading("Booking...");
+      if (!token) {
+        toast.error("Unauthorized");
+        return;
+      }
 
-      await axios.post(
+      /**
+       * =====================================
+       * BOOK APPOINTMENT
+       * =====================================
+       */
+
+      const loadingToast = toast.loading("Booking appointment...");
+
+      const bookingRes = await axios.post(
         "/api/patient/appointments/book",
         {
           slot_id: selectedSlot.id,
+
           reason,
         },
         {
           headers: {
             Authorization: `Bearer ${token}`,
           },
-        }
+        },
       );
 
-      toast.success("Appointment booked 🎉", {
+      toast.success(bookingRes.data?.message || "Appointment booked 🎉", {
         id: loadingToast,
       });
 
-      // RESET STATE
+      /**
+       * =====================================
+       * FETCH ACTIVE PROVIDER
+       * =====================================
+       */
+
+      let provider = "MESSAGE_BIRD";
+
+      try {
+        const providerRes = await axios.get("/api/whatsapp/provider");
+
+        provider = providerRes.data?.provider || "MESSAGE_BIRD";
+      } catch (err) {
+        console.error("Provider fetch failed:", err);
+      }
+
+      /**
+       * =====================================
+       * DETERMINE SEND ROUTE
+       * =====================================
+       */
+
+      const sendEndpoint =
+        provider === "META_WHATSAPP"
+          ? "/api/whatsapp/meta/send"
+          : "/api/whatsapp/messagebird/send";
+
+      /**
+       * =====================================
+       * SEND WHATSAPP MESSAGE
+       * =====================================
+       */
+
+      const notifyToast = toast.loading("Informing doctor on WhatsApp...");
+
+      try {
+        /**
+         * SLOT DETAILS
+         */
+
+        const start = new Date(selectedSlot.start_time);
+
+        const end = new Date(selectedSlot.end_time);
+
+        const appointmentDate = start.toLocaleDateString();
+
+        const appointmentTime = `${start.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })} - ${end.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`;
+
+        /**
+         * SEND MESSAGE
+         *
+         * Doctor number should ideally
+         * come from backend later.
+         */
+
+        await axios.post(
+          sendEndpoint,
+          {
+            /**
+             * TEMPORARY TEST MODE
+             */
+            test: true,
+
+            simulate_failure: false, // Set to true to simulate a failure response from the provider
+
+            /**
+             * USE HOST OR USER
+             */
+            sendby: "HOST",
+
+            /**
+             * MESSAGE PAYLOAD
+             */
+            to: doctor?.phone || "+2348000000000",
+
+            message: `New Appointment Booking
+
+            Doctor: ${doctor?.name}
+
+            Patient Reason:
+            ${reason}
+
+            Appointment Date:
+            ${appointmentDate}
+
+            Appointment Time:
+            ${appointmentTime}
+
+            Please check your dashboard for details.`,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        toast.success(
+          `Doctor notified successfully via ${
+            provider === "META_WHATSAPP" ? "Meta WhatsApp" : "MessageBird"
+          }`,
+          {
+            id: notifyToast,
+          },
+        );
+      } catch (err: any) {
+        console.error("WhatsApp send error:", err);
+
+        toast.error(
+          err?.response?.data?.message ||
+            "Appointment booked but WhatsApp notification failed",
+          {
+            id: notifyToast,
+          },
+        );
+      }
+
+      /**
+       * =====================================
+       * RESET STATE
+       * =====================================
+       */
+
       setSelectedSlot(null);
+
       setReason("");
 
-      // REFRESH SLOTS
+      /**
+       * REFRESH SLOTS
+       */
+
       fetchSlots();
     } catch (err: any) {
-      toast.error(
-        err?.response?.data?.message || "Booking failed"
-      );
+      toast.error(err?.response?.data?.message || "Booking failed");
     }
   };
 
@@ -107,12 +241,10 @@ export default function DoctorSlots({
       {/* DOCTOR INFO */}
       {doctor && (
         <div className="mb-6">
-          <h2 className="text-2xl font-bold">
-            {doctor.name}
-          </h2>
+          <h2 className="text-2xl font-bold">{doctor.name}</h2>
           <p className="text-gray-300 text-sm">
-            {doctor.specialty || "General"} •{" "}
-            {doctor.experience || 0} yrs experience
+            {doctor.specialty || "General"} • {doctor.experience || 0} yrs
+            experience
           </p>
         </div>
       )}
@@ -141,9 +273,7 @@ export default function DoctorSlots({
       </div>
 
       {/* LOADING */}
-      {loading && (
-        <p className="text-gray-300">Loading slots...</p>
-      )}
+      {loading && <p className="text-gray-300">Loading slots...</p>}
 
       {/* EMPTY */}
       {!loading && slots.length === 0 && (
@@ -160,9 +290,7 @@ export default function DoctorSlots({
               const start = new Date(slot.start_time);
               const end = new Date(slot.end_time);
 
-              const interval =
-                (end.getTime() - start.getTime()) /
-                (1000 * 60);
+              const interval = (end.getTime() - start.getTime()) / (1000 * 60);
 
               return (
                 <div
@@ -188,9 +316,7 @@ export default function DoctorSlots({
                   </p>
 
                   {/* INTERVAL */}
-                  <p className="text-sm text-gray-300">
-                    {interval} mins
-                  </p>
+                  <p className="text-sm text-gray-300">{interval} mins</p>
                 </div>
               );
             })}
@@ -224,9 +350,7 @@ export default function DoctorSlots({
       {/* BOOKING FORM */}
       {selectedSlot && (
         <div className="mt-8 bg-white/10 p-4 rounded">
-          <h3 className="mb-3 font-semibold">
-            Book Selected Slot
-          </h3>
+          <h3 className="mb-3 font-semibold">Book Selected Slot</h3>
 
           <textarea
             className="w-full p-3 rounded bg-white text-black mb-3"

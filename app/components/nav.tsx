@@ -6,11 +6,7 @@ import axios from "axios";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { useDispatch, useSelector } from "react-redux";
-import {
-  setUser,
-  logout,
-  setInitialized,
-} from "@/store/slices/mainslice";
+import { setUser, logout, setInitialized } from "@/store/slices/mainslice";
 
 export default function Nav() {
   const router = useRouter();
@@ -43,7 +39,7 @@ export default function Nav() {
           setUser({
             me: res.data.me,
             profileComplete: res.data.profileComplete,
-          })
+          }),
         );
       } catch {
         Cookies.remove("access_token");
@@ -58,28 +54,28 @@ export default function Nav() {
   if (!isInitialized) return null;
 
   const handleLogout = async () => {
-  try {
-    const token = Cookies.get("access_token");
+    try {
+      const token = Cookies.get("access_token");
 
-    if (token) {
-      await axios.post(
-        "/api/auth/logout",
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
+      if (token) {
+        await axios.post(
+          "/api/auth/logout",
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           },
-        }
-      );
+        );
+      }
+    } catch (err) {
+      console.error("Logout error", err);
     }
-  } catch (err) {
-    console.error("Logout error", err);
-  }
 
-  Cookies.remove("access_token"); // clear client
-  dispatch(logout());
-  router.push("/auth/login");
-};
+    Cookies.remove("access_token"); // clear client
+    dispatch(logout());
+    router.push("/auth/login");
+  };
 
   const isDoctor = me?.role === "DOCTOR";
 
@@ -140,7 +136,7 @@ export default function Nav() {
               )}
 
               <Link
-                href="/dashboard"
+                href={isDoctor ? "/dashboard/doctor" : "/dashboard/patient"}
                 className="text-white hover:text-purple-400"
               >
                 Dashboard
@@ -204,10 +200,7 @@ export default function Nav() {
             <>
               {isDoctor ? (
                 <>
-                  <MobileItem
-                    href="/doctor/schedule/view"
-                    label="Schedule"
-                  />
+                  <MobileItem href="/doctor/schedule/view" label="Schedule" />
 
                   {/* NEW */}
                   <MobileItem
@@ -229,7 +222,10 @@ export default function Nav() {
                 </>
               )}
 
-              <MobileItem href="/dashboard" label="Dashboard" />
+              <MobileItem
+                href={isDoctor ? "/dashboard/doctor" : "/dashboard/patient"}
+                label="Dashboard"
+              />
 
               {!profileComplete && (
                 <div className="text-yellow-400 text-sm">
