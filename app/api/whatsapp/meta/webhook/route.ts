@@ -1,6 +1,8 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import dbClient from "@/lib/db";
+import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
 
 /**
  * =========================================
@@ -16,68 +18,46 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const mode =
-      searchParams.get("hub.mode");
+    const mode = searchParams.get("hub.mode");
 
-    const token =
-      searchParams.get(
-        "hub.verify_token"
-      );
+    const token = searchParams.get("hub.verify_token");
 
-    const challenge =
-      searchParams.get(
-        "hub.challenge"
-      );
+    const challenge = searchParams.get("hub.challenge");
 
-    const verifyToken =
-      process.env
-        .META_VERIFY_TOKEN;
+    const verifyToken = process.env.META_VERIFY_TOKEN;
 
     /**
      * VERIFY TOKEN
      */
 
-    if (
-      mode === "subscribe" &&
-      token === verifyToken
-    ) {
-      console.log(
-        "META WEBHOOK VERIFIED"
-      );
+    if (mode === "subscribe" && token === verifyToken) {
+      console.log("META WEBHOOK VERIFIED");
 
-      return new Response(
-        challenge,
-        {
-          status: 200,
-        }
-      );
+      return new Response(challenge, {
+        status: 200,
+      });
     }
 
-    console.error(
-      "META WEBHOOK VERIFICATION FAILED"
-    );
+    console.error("META WEBHOOK VERIFICATION FAILED");
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Webhook verification failed",
+
+        message: "Webhook verification failed",
       },
-      { status: 403 }
+      { status: 403 },
     );
   } catch (err) {
-    console.error(
-      "META WEBHOOK GET ERROR:",
-      err
-    );
+    console.error("META WEBHOOK GET ERROR:", err);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Webhook verification error",
+
+        message: "Webhook verification error",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -87,38 +67,95 @@ export async function GET(req: Request) {
  * META WEBHOOK EVENTS
  * =========================================
  *
- * Meta sends:
+ * Handles:
  * - incoming messages
- * - delivery status
- * - read receipts
- * - failures
+ * - statuses
+ * - media
+ * - delivery updates
  */
 
 export async function POST(req: Request) {
   try {
+    await dbClient.init();
+
     const body = await req.json();
 
     /**
      * LOG RAW PAYLOAD
      */
 
-    console.log(
-      "META WEBHOOK EVENT:",
-      JSON.stringify(body, null, 2)
-    );
+    console.log("META WEBHOOK EVENT:", JSON.stringify(body, null, 2));
 
     /**
-     * SAFELY EXTRACT DATA
+     * =====================================
+     * VERIFY OBJECT TYPE
+     * =====================================
      */
 
-    const entry =
-      body?.entry?.[0];
+    if (body?.object !== "whatsapp_business_account") {
+      return NextResponse.json(
+        {
+          success: false,
 
-    const change =
-      entry?.changes?.[0];
+          message: "Invalid webhook object",
+        },
+        { status: 400 },
+      );
+    }
 
-    const value =
-      change?.value;
+    /**
+     * =====================================
+     * SAFELY EXTRACT DATA
+     * =====================================
+     */
+
+    const entry = body?.entry?.[0];
+
+    const change = entry?.changes?.[0];
+
+    const value = change?.value;
+
+    /**
+     * IMPORTANT:
+     * Identify WHICH doctor
+     * owns this event.
+     */
+
+    const phone_number_id = value?.metadata?.phone_number_id;
+
+    /**
+     * =====================================
+     * FIND DOCTOR INTEGRATION
+     * =====================================
+     */
+
+    let integration = null;
+
+    if (phone_number_id) {
+      const integrationRepo =
+        dbClient.client.getRepository(WhatsAppIntegration);
+
+      integration = await integrationRepo.findOne({
+        where: {
+          provider: "META_WHATSAPP",
+
+          phone_number_id,
+        },
+      });
+
+      if (integration) {
+        console.log("WEBHOOK OWNER FOUND:", {
+          doctor_id: integration.doctor_id,
+
+          provider: integration.provider,
+        });
+      } else {
+        console.warn(
+          "NO META INTEGRATION FOUND FOR PHONE NUMBER ID:",
+          phone_number_id,
+        );
+      }
+    }
 
     /**
      * =====================================
@@ -126,36 +163,58 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const incomingMessage =
-      value?.messages?.[0];
+    const incomingMessage = value?.messages?.[0];
 
     if (incomingMessage) {
-      const from =
-        incomingMessage.from;
+      const from = incomingMessage.from;
 
-      const type =
-        incomingMessage.type;
+      const type = incomingMessage.type;
 
-      const text =
-        incomingMessage?.text
-          ?.body;
+      /**
+       * TEXT MESSAGE
+       */
 
-      console.log(
-        "NEW WHATSAPP MESSAGE:"
-      );
+      const text = incomingMessage?.text?.body || null;
+
+      /**
+       * MEDIA
+       */
+
+      const image = incomingMessage?.image || null;
+
+      const audio = incomingMessage?.audio || null;
+
+      const video = incomingMessage?.video || null;
+
+      const document = incomingMessage?.document || null;
+
+      console.log("NEW WHATSAPP MESSAGE:");
 
       console.log({
+        doctor_id: integration?.doctor_id || null,
+
         from,
+
         type,
+
         text,
+
+        image,
+
+        audio,
+
+        video,
+
+        document,
       });
 
       /**
        * FUTURE:
-       * - save to DB
-       * - notify doctor
-       * - chatbot
-       * - AI processing
+       * - save message to DB
+       * - doctor notifications
+       * - AI chatbot
+       * - analytics
+       * - live dashboard
        */
     }
 
@@ -165,61 +224,55 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const status =
-      value?.statuses?.[0];
+    const status = value?.statuses?.[0];
 
     if (status) {
-      console.log(
-        "WHATSAPP MESSAGE STATUS:"
-      );
+      console.log("WHATSAPP MESSAGE STATUS:");
 
       console.log({
+        doctor_id: integration?.doctor_id || null,
+
         id: status.id,
 
-        status:
-          status.status,
+        status: status.status,
 
-        recipient:
-          status.recipient_id,
+        recipient: status.recipient_id,
 
-        timestamp:
-          status.timestamp,
+        timestamp: status.timestamp,
       });
 
       /**
        * FUTURE:
        * - save delivery state
+       * - retries
        * - analytics
-       * - failed retry
        */
     }
 
     /**
-     * IMPORTANT:
-     * Always acknowledge webhook
+     * =====================================
+     * ACKNOWLEDGE WEBHOOK
+     * =====================================
      */
 
     return NextResponse.json(
       {
         success: true,
-        message:
-          "Webhook received",
+
+        message: "Webhook received",
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (err) {
-    console.error(
-      "META WEBHOOK POST ERROR:",
-      err
-    );
+    console.error("META WEBHOOK POST ERROR:", err);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Webhook processing failed",
+
+        message: "Webhook processing failed",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

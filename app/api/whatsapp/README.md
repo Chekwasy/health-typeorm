@@ -1,384 +1,478 @@
 # WhatsApp Integration Module
 
-This module provides a flexible WhatsApp integration layer for the healthcare appointment platform.
+This module provides a scalable WhatsApp integration layer for the healthcare appointment platform.
 
-It supports:
+The goal of this implementation is to support multiple WhatsApp providers while keeping the appointment system provider-agnostic and extensible for future production integrations.
 
-- Meta WhatsApp Cloud API
-- MessageBird WhatsApp API
-- Mock onboarding/testing flows
-- Provider switching
-- Webhook handling
-- Future production extensibility
+---
+
+# Supported Providers
+
+The system currently supports:
+
+- META_WHATSAPP
+- MESSAGE_BIRD
+
+Both providers are implemented using a common architecture pattern to ensure scalability and maintainability.
+
+---
+
+# Current Implementation Scope
+
+The current implementation focuses on:
+
+- WhatsApp onboarding flows
+- Appointment notification messaging
+- Provider abstraction
+- Webhook verification
+- Delivery status handling
+- Mock testing support
+- Production-style API architecture
+
+The implementation is intentionally designed to support future production migration with minimal code changes.
+
+---
+
+# Current Limitations
+
+The following features are NOT yet implemented:
+
+- persistent chat history
+- live real-time messaging dashboard
+- media storage
+- doctor-patient chat synchronization
+- unread message tracking
+- socket-based communication
+
+Webhook and provider architecture were designed to support these features later.
 
 ---
 
 # Architecture Overview
 
-The integration layer is designed to support multiple WhatsApp providers without affecting the appointment system.
+The module uses a provider-based architecture.
 
-Current supported providers:
+This allows the system to:
 
-- META_WHATSAPP
-- MESSAGE_BIRD
-
-The system supports:
-
-- provider switching
-- mocked onboarding
-- webhook event handling
-- notification messaging
-- future production integration
+- switch providers dynamically
+- support multiple providers simultaneously
+- isolate provider-specific logic
+- extend integrations easily in the future
 
 ---
 
-# Current Scope
+# High-Level Flow
 
-The current implementation focuses mainly on:
-
-- appointment notifications
-- mocked onboarding flows
-- provider architecture
-- webhook verification
-- delivery tracking
-
-It does NOT currently implement:
-
-- full live chat synchronization
-- persistent conversation history
-- media storage
-- real-time doctor dashboard messaging
-
-These can be added later without changing the current architecture.
+Doctor connects provider
+↓
+Integration saved in database
+↓
+Appointment system sends notifications
+↓
+Provider handles delivery
+↓
+Webhook receives provider events
+↓
+System logs statuses/events
 
 ---
 
-# Provider Selection
+# Database Tables
 
-Provider selection is controlled through:
+## settings
 
-- environment variables
-- database settings table
+Stores global provider configuration.
 
-The source is controlled by:
+Used for:
 
-```env
-PROVIDER_SOURCE=USE_ENV
+- provider selection
+- feature toggles
+- mock mode configuration
+- provider source control
 
-# WhatsApp Integration Module
+Example fields:
 
-This module provides a flexible WhatsApp integration layer for the healthcare appointment platform.
-
-It supports:
-
-- Meta WhatsApp Cloud API
-- MessageBird WhatsApp API
-- Mock onboarding/testing flows
-- Provider switching
-- Webhook handling
-- Future production extensibility
+- provider_source
+- whatsapp_provider
+- enable_meta_whatsapp
+- enable_messagebird
+- enable_mock_mode
 
 ---
 
-# Architecture Overview
+## whatsapp_integrations
 
-The integration layer is designed to support multiple WhatsApp providers without affecting the appointment system.
+Stores provider integrations for doctors.
 
-Current supported providers:
+Each doctor may have:
 
-- META_WHATSAPP
-- MESSAGE_BIRD
+- one META_WHATSAPP integration
+- one MESSAGE_BIRD integration
 
-The system supports:
+Duplicate provider integrations are prevented using database uniqueness constraints.
 
-- provider switching
-- mocked onboarding
-- webhook event handling
-- notification messaging
-- future production integration
+Stores:
 
----
-
-# Current Scope
-
-The current implementation focuses mainly on:
-
-- appointment notifications
-- mocked onboarding flows
-- provider architecture
-- webhook verification
-- delivery tracking
-
-It does NOT currently implement:
-
-- full live chat synchronization
-- persistent conversation history
-- media storage
-- real-time doctor dashboard messaging
-
-These can be added later without changing the current architecture.
+- onboarding status
+- access tokens
+- business information
+- provider metadata
+- webhook configuration
 
 ---
 
 # Provider Selection
 
-Provider selection is controlled through:
+Provider selection supports two modes.
 
-- environment variables
-- database settings table
+## USE_ENV
 
-The source is controlled by:
+Provider controlled via environment variables.
+
+Example:
 
 ```env
 PROVIDER_SOURCE=USE_ENV
+WHATSAPP_PROVIDER=MESSAGE_BIRD
+```
 
-Available values:
+---
 
-USE_ENV
-USE_DB
-WhatsApp Providers
-Meta WhatsApp
+## USE_DB
 
-Uses Meta WhatsApp Cloud API.
+Provider controlled dynamically from database settings.
 
-Features:
+Example:
 
-Embedded signup mock flow
-Webhook verification
-Production-style message sending
-Mock testing mode
-MessageBird
+```env
+PROVIDER_SOURCE=USE_DB
+```
 
-Uses MessageBird WhatsApp API.
+This allows runtime switching without redeployment.
 
-Features:
+---
 
-Mock provider support
-Production-style send flow
-Webhook event handling
-Extensible architecture
-Environment Variables
+# Environment Variables
 
-Example configuration:
-# PROVIDER CONTROL
+## Provider Control
+
+```env
 PROVIDER_SOURCE=USE_ENV
-WHATSAPP_PROVIDER=META_WHATSAPP
+WHATSAPP_PROVIDER=MESSAGE_BIRD
+```
 
-# META
+---
+
+## Meta WhatsApp
+
+```env
 META_VERIFY_TOKEN=mock_verify_token
 META_ACCESS_TOKEN=mock_access_token
 META_PHONE_NUMBER_ID=mock_phone_number_id
 META_PHONE_NUMBER=+15550000000
+```
 
-# MESSAGEBIRD
+---
+
+## MessageBird
+
+```env
 MESSAGEBIRD_API_KEY=mock_messagebird_key
 MESSAGEBIRD_CHANNEL_ID=mock_channel_id
 MESSAGEBIRD_PHONE_NUMBER=+15550000000
 MESSAGEBIRD_WEBHOOK_SECRET=mock_webhook_secret
+```
 
-# APP
+---
+
+## Application
+
+```env
 NEXT_PUBLIC_APP_URL=https://health-typeorm.vercel.app
+```
 
-Database Tables
-settings
+---
 
-Stores:
+# API Routes
 
-provider source
-active provider
-feature toggles
-whatsapp_integrations
+# Provider Routes
 
-Stores:
-
-doctor integration details
-provider info
-onboarding state
-webhook state
-access tokens
-business IDs
-API Routes
-Provider
-GET /api/whatsapp/provider
+## GET `/api/whatsapp/provider`
 
 Returns:
 
-active provider
-provider source
-enabled providers
-POST /api/whatsapp/provider
+- active provider
+- provider source
+- enabled providers
+- mock mode state
 
-Switch active provider.
+---
+
+## POST `/api/whatsapp/provider`
+
+Switches active provider.
 
 Works only when:
 
+```env
 PROVIDER_SOURCE=USE_DB
-Meta Routes
-POST /api/whatsapp/meta/signup
+```
 
-Mock Meta Embedded Signup flow.
+---
+
+# Meta WhatsApp Routes
+
+## POST `/api/whatsapp/meta/signup`
+
+Mock Meta Embedded Signup implementation.
 
 Features:
 
-mocked onboarding
-fake WABA generation
-doctor integration saving
-optional test mode
-GET /api/whatsapp/meta/status
+- mocked onboarding flow
+- mocked token generation
+- mocked WABA generation
+- doctor integration persistence
+- duplicate integration prevention
+- optional test mode
 
-Returns doctor Meta integration status.
+---
 
-POST /api/whatsapp/meta/send
+## GET `/api/whatsapp/meta/status`
 
-Send WhatsApp message using:
+Returns Meta integration status for authenticated doctor.
 
-HOST (.env credentials)
-OR
-USER (doctor integration)
+Includes:
 
-Supports:
+- onboarding state
+- webhook state
+- configuration validation
+- provider metadata
 
-mock mode
-production-style API calls
-GET /api/whatsapp/meta/webhook
+---
 
-Webhook verification endpoint.
+## POST `/api/whatsapp/meta/send`
 
-Used by Meta to verify callback URL.
-
-POST /api/whatsapp/meta/webhook
-
-Receives:
-
-incoming messages
-delivery statuses
-read receipts
-webhook events
-
-Currently used mainly for:
-
-logging
-debugging
-future extensibility
-MessageBird Routes
-GET /api/whatsapp/messagebird/status
-
-Returns doctor MessageBird integration status.
-
-POST /api/whatsapp/messagebird/send
-
-Send WhatsApp message using MessageBird.
+Sends WhatsApp message using Meta provider.
 
 Supports:
 
-HOST mode
-USER mode
-mock mode
-production-style API calls
-GET /api/whatsapp/messagebird/webhook
+- HOST mode (.env credentials)
+- USER mode (doctor credentials)
+- mock mode
+- production-style API calls
 
-Webhook verification route.
+---
 
-POST /api/whatsapp/messagebird/webhook
+## GET `/api/whatsapp/meta/webhook`
 
-Receives:
+Meta webhook verification endpoint.
 
-incoming events
-delivery statuses
-read receipts
+Used by Meta to verify:
 
-Currently used for:
+- callback URL
+- verify token
 
-logging
-event tracking
-debugging
-Test Mode
+---
+
+## POST `/api/whatsapp/meta/webhook`
+
+Receives Meta webhook events.
+
+Handles:
+
+- incoming messages
+- delivery statuses
+- media events
+- read receipts
+
+Current implementation mainly performs:
+
+- logging
+- debugging
+- provider ownership resolution
+
+Architecture prepared for future persistence.
+
+---
+
+# MessageBird Routes
+
+## POST `/api/whatsapp/messagebird/signup`
+
+Mock MessageBird onboarding implementation.
+
+Features:
+
+- mocked onboarding flow
+- mocked channel generation
+- mocked workspace generation
+- doctor integration persistence
+- duplicate integration prevention
+- optional test mode
+
+---
+
+## GET `/api/whatsapp/messagebird/status`
+
+Returns MessageBird integration status.
+
+Includes:
+
+- onboarding state
+- webhook state
+- channel information
+- configuration validation
+
+---
+
+## POST `/api/whatsapp/messagebird/send`
+
+Sends WhatsApp message using MessageBird.
+
+Supports:
+
+- HOST mode
+- USER mode
+- mock mode
+- production-style API calls
+
+---
+
+## GET `/api/whatsapp/messagebird/webhook`
+
+MessageBird webhook verification endpoint.
+
+---
+
+## POST `/api/whatsapp/messagebird/webhook`
+
+Receives MessageBird webhook events.
+
+Handles:
+
+- incoming messages
+- delivery statuses
+- media events
+
+Current implementation focuses on:
+
+- logging
+- event tracking
+- provider ownership resolution
+
+---
+
+# Test Mode
 
 Most routes support:
 
+```json
 {
   "test": true
 }
+```
 
-Behavior:
+When enabled:
 
-skips real provider calls
-returns mocked responses
-useful during development/testing
-Production Style Mode
+- provider calls are mocked
+- database persistence may be skipped
+- simulated responses are returned
+
+Useful for:
+
+- development
+- testing
+- onboarding simulation
+
+---
+
+# Production-Style Mode
 
 When:
 
+```json
 {
   "test": false
 }
+```
 
 or omitted:
 
-The system attempts real provider API requests.
+The system attempts provider API calls using configured credentials.
 
-This requires:
+Requires:
 
-valid credentials
-valid provider setup
-active business accounts
-Webhook Handling
+- valid provider credentials
+- active business setup
+- valid webhook configuration
 
-Current webhook implementation:
+---
 
-verifies providers
-logs incoming events
-logs delivery statuses
-prepares architecture for future chat persistence
+# Webhook Handling
 
-Current implementation does NOT persist conversations yet.
+Webhook implementation currently supports:
 
-Future Improvements
+- provider verification
+- incoming message events
+- delivery status tracking
+- provider ownership lookup
+- media event logging
 
-Planned future improvements:
+Conversation persistence is intentionally deferred for future implementation.
 
-conversation persistence
-media support
-live doctor dashboard chat
-unread counts
-notification system
-AI chatbot support
-message retries
-analytics
-delivery tracking
-encrypted token storage
-webhook signature validation
-Security Notes
+---
 
-Current implementation uses mock/testing flows.
+# Security Notes
 
-Production improvements recommended:
+Current implementation uses mocked/testing flows.
 
-encrypt provider access tokens
-validate webhook signatures
-implement rate limiting
-add audit logs
-use database migrations instead of synchronize
-rotate provider credentials
-Deployment Notes
+Recommended production improvements:
 
-Recommended deployment:
+- encrypt access tokens
+- validate webhook signatures
+- add rate limiting
+- implement audit logs
+- use database migrations
+- rotate provider credentials
+- add webhook retry handling
 
-Vercel
-Neon PostgreSQL
-Upstash Redis
+---
+
+# Future Improvements
+
+Planned future improvements include:
+
+- persistent chat history
+- live doctor messaging dashboard
+- media storage
+- AI chatbot support
+- analytics
+- unread counts
+- retry handling
+- delivery insights
+- websocket communication
+- real-time notifications
+
+---
+
+# Deployment Recommendations
+
+Recommended stack:
+
+- Vercel
+- Neon PostgreSQL
+- Upstash Redis
 
 Current implementation supports:
 
-local development
-mocked testing
-production-style provider calls
-Important Notes
+- local development
+- mocked testing
+- production-style provider calls
 
-Current Meta implementation is partially mocked because:
+---
 
-no production Meta Business assets are available
-no production WABA exists
-onboarding flow is simulated
+# Important Notes
 
-Architecture is intentionally designed so real credentials can later replace mocked flows with minimal code changes.
+Current Meta implementation is partially mocked because production Meta Business assets are not yet available.
+
+The architecture was intentionally designed so real provider credentials can later replace mocked flows with minimal code changes.

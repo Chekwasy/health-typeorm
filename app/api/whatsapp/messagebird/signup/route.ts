@@ -7,6 +7,7 @@ import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
 
 interface Body {
   business_name: string;
+
   phone_number: string;
 
   simulate_failure?: boolean;
@@ -33,6 +34,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
+
           message: err.message || "Unauthorized",
         },
         { status: 401 },
@@ -50,11 +52,15 @@ export async function POST(req: Request) {
       test = false,
     } = body;
 
-    // VALIDATION
+    /**
+     * VALIDATION
+     */
+
     if (!business_name) {
       return NextResponse.json(
         {
           success: false,
+
           message: "business_name is required",
         },
         { status: 400 },
@@ -65,20 +71,25 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
+
           message: "phone_number is required",
         },
         { status: 400 },
       );
     }
 
-    // MOCK FAILURE
+    /**
+     * MOCK FAILURE
+     */
+
     if (simulate_failure) {
       return NextResponse.json(
         {
           success: false,
-          message: "Meta Embedded Signup failed",
 
-          error_code: "META_SIGNUP_FAILED",
+          message: "MessageBird signup failed",
+
+          error_code: "MESSAGEBIRD_SIGNUP_FAILED",
         },
         { status: 400 },
       );
@@ -89,26 +100,26 @@ export async function POST(req: Request) {
     /**
      * IMPORTANT:
      *
-     * Only prevent duplicate META.
+     * Only prevent duplicate MESSAGE_BIRD
      *
      * Doctor can still later connect:
-     * MESSAGE_BIRD
+     * META_WHATSAPP
      */
 
-    const existingMetaIntegration = await integrationRepo.findOne({
+    const existingMessageBirdIntegration = await integrationRepo.findOne({
       where: {
         doctor_id,
 
-        provider: "META_WHATSAPP",
+        provider: "MESSAGE_BIRD",
       },
     });
 
-    if (existingMetaIntegration) {
+    if (existingMessageBirdIntegration) {
       return NextResponse.json(
         {
           success: false,
 
-          message: "Doctor already has Meta WhatsApp connected",
+          message: "Doctor already has MessageBird connected",
         },
         { status: 400 },
       );
@@ -123,52 +134,46 @@ export async function POST(req: Request) {
     const integration = integrationRepo.create({
       doctor_id,
 
-      provider: "META_WHATSAPP",
+      provider: "MESSAGE_BIRD",
 
       onboarding_status: "CONNECTED",
 
       business_name,
 
-      business_id: `mock_business_${timestamp}`,
-
-      waba_id: `mock_waba_${timestamp}`,
-
-      phone_number_id: `mock_phone_id_${timestamp}`,
+      business_id: `mock_messagebird_business_${timestamp}`,
 
       phone_number,
 
       /**
        * IMPORTANT:
-       * In production:
-       * encrypt token before save
+       * Encrypt in production
        */
 
-      access_token: `mock_access_token_${timestamp}`,
+      access_token: `mock_messagebird_access_token_${timestamp}`,
 
       webhook_status: "PENDING",
 
       metadata: {
-        webhook_verify_token:
-          process.env.META_VERIFY_TOKEN || "mock_verify_token",
+        channel_id: `mock_channel_${timestamp}`,
+
+        workspace_id: `mock_workspace_${timestamp}`,
+
+        webhook_secret:
+          process.env.MESSAGEBIRD_WEBHOOK_SECRET || "mock_webhook_secret",
 
         mock_mode: true,
-
-        embedded_signup: true,
       },
     });
 
     /**
      * SAVE TO DATABASE
-     *
-     * Skip save when:
-     * test === true
      */
 
     if (!test) {
       await integrationRepo.save(integration);
     }
 
-    console.log("META MOCK SIGNUP SUCCESS:", integration);
+    console.log("MESSAGEBIRD MOCK SIGNUP SUCCESS:", integration);
 
     return NextResponse.json(
       {
@@ -178,8 +183,8 @@ export async function POST(req: Request) {
 
         message:
           test === true
-            ? "Meta signup test successful (not saved to DB)"
-            : "WhatsApp business connected successfully",
+            ? "MessageBird signup test successful (not saved to DB)"
+            : "MessageBird connected successfully",
 
         data: {
           provider: integration.provider,
@@ -193,15 +198,17 @@ export async function POST(req: Request) {
           },
 
           whatsapp: {
-            waba_id: integration.waba_id,
-
-            phone_number_id: integration.phone_number_id,
-
             phone_number: integration.phone_number,
           },
 
+          messagebird: {
+            channel_id: integration.metadata?.channel_id,
+
+            workspace_id: integration.metadata?.workspace_id,
+          },
+
           webhook: {
-            callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/whatsapp/meta/webhook`,
+            callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/whatsapp/messagebird/webhook`,
 
             verification_status: integration.webhook_status,
           },
@@ -210,10 +217,10 @@ export async function POST(req: Request) {
       { status: 200 },
     );
   } catch (err: any) {
-    console.error("META SIGNUP ERROR:", err);
+    console.error("MESSAGEBIRD SIGNUP ERROR:", err);
 
     /**
-     * UNIQUE CONSTRAINT ERROR
+     * UNIQUE CONSTRAINT
      */
 
     if (err?.code === "23505") {
@@ -221,7 +228,7 @@ export async function POST(req: Request) {
         {
           success: false,
 
-          message: "Meta WhatsApp already connected for this doctor",
+          message: "MessageBird already connected for this doctor",
         },
         { status: 400 },
       );
@@ -230,7 +237,8 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         success: false,
-        message: "Failed to complete Meta signup",
+
+        message: "Failed to complete MessageBird signup",
       },
       { status: 500 },
     );

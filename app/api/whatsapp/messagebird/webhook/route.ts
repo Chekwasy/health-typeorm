@@ -1,67 +1,63 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+import dbClient from "@/lib/db";
+import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
 
 /**
  * =========================================
  * MESSAGEBIRD WEBHOOK VERIFICATION
  * =========================================
  *
- * We validate using:
+ * Validates:
  * - webhook secret
- *
  */
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
-    const secret =
-      searchParams.get("secret");
+    const secret = searchParams.get("secret");
 
-    const webhookSecret =
-      process.env
-        .MESSAGEBIRD_WEBHOOK_SECRET;
+    const webhookSecret = process.env.MESSAGEBIRD_WEBHOOK_SECRET;
 
-    if (
-      secret &&
-      secret === webhookSecret
-    ) {
-      console.log(
-        "MESSAGEBIRD WEBHOOK VERIFIED"
-      );
+    /**
+     * VERIFY SECRET
+     */
+
+    if (secret && secret === webhookSecret) {
+      console.log("MESSAGEBIRD WEBHOOK VERIFIED");
 
       return NextResponse.json(
         {
           success: true,
-          message:
-            "Webhook verified",
+
+          message: "Webhook verified",
         },
-        { status: 200 }
+        { status: 200 },
       );
     }
 
-    return NextResponse.json(
-      {
-        success: false,
-        message:
-          "Webhook verification failed",
-      },
-      { status: 403 }
-    );
-  } catch (err) {
-    console.error(
-      "MESSAGEBIRD WEBHOOK GET ERROR:",
-      err
-    );
+    console.error("MESSAGEBIRD WEBHOOK VERIFICATION FAILED");
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Webhook verification error",
+
+        message: "Webhook verification failed",
       },
-      { status: 500 }
+      { status: 403 },
+    );
+  } catch (err) {
+    console.error("MESSAGEBIRD WEBHOOK GET ERROR:", err);
+
+    return NextResponse.json(
+      {
+        success: false,
+
+        message: "Webhook verification error",
+      },
+      { status: 500 },
     );
   }
 }
@@ -73,23 +69,77 @@ export async function GET(req: Request) {
  *
  * Handles:
  * - incoming messages
- * - delivery statuses
- * - read receipts
- * - failures
+ * - statuses
+ * - media
+ * - delivery updates
  */
 
 export async function POST(req: Request) {
   try {
+    await dbClient.init();
+
     const body = await req.json();
 
     /**
      * LOG RAW PAYLOAD
      */
 
-    console.log(
-      "MESSAGEBIRD WEBHOOK EVENT:",
-      JSON.stringify(body, null, 2)
-    );
+    console.log("MESSAGEBIRD WEBHOOK EVENT:", JSON.stringify(body, null, 2));
+
+    /**
+     * =====================================
+     * EXTRACT CHANNEL ID
+     * =====================================
+     *
+     * Different payloads may vary.
+     */
+
+    const channel_id =
+      body?.channelId ||
+      body?.channel_id ||
+      body?.message?.channelId ||
+      body?.message?.channel_id ||
+      null;
+
+    /**
+     * =====================================
+     * FIND OWNER DOCTOR
+     * =====================================
+     */
+
+    let integration = null;
+
+    if (channel_id) {
+      const integrationRepo =
+        dbClient.client.getRepository(WhatsAppIntegration);
+
+      /**
+       * JSONB QUERY
+       */
+
+      integration = await integrationRepo
+        .createQueryBuilder("integration")
+        .where("integration.provider = :provider", {
+          provider: "MESSAGE_BIRD",
+        })
+        .andWhere(`integration.metadata ->> 'channel_id' = :channel_id`, {
+          channel_id,
+        })
+        .getOne();
+
+      if (integration) {
+        console.log("MESSAGEBIRD WEBHOOK OWNER FOUND:", {
+          doctor_id: integration.doctor_id,
+
+          provider: integration.provider,
+        });
+      } else {
+        console.warn(
+          "NO MESSAGEBIRD INTEGRATION FOUND FOR CHANNEL:",
+          channel_id,
+        );
+      }
+    }
 
     /**
      * =====================================
@@ -97,36 +147,60 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const message =
-      body?.message;
+    const message = body?.message;
 
     if (message) {
-      console.log(
-        "NEW MESSAGEBIRD MESSAGE:"
-      );
+      const type = message?.type || "text";
+
+      /**
+       * TEXT
+       */
+
+      const text = message?.content?.text || null;
+
+      /**
+       * MEDIA
+       */
+
+      const image = message?.content?.image || null;
+
+      const audio = message?.content?.audio || null;
+
+      const video = message?.content?.video || null;
+
+      const document = message?.content?.document || null;
+
+      console.log("NEW MESSAGEBIRD MESSAGE:");
 
       console.log({
+        doctor_id: integration?.doctor_id || null,
+
         id: message.id,
 
-        from:
-          message.from,
+        from: message.from,
 
         to: message.to,
 
-        type:
-          message.type,
+        type,
 
-        text:
-          message.content
-            ?.text,
+        text,
+
+        image,
+
+        audio,
+
+        video,
+
+        document,
       });
 
       /**
        * FUTURE:
-       * - save to DB
-       * - notify doctor
+       * - save messages
+       * - doctor notifications
        * - chatbot
-       * - AI processing
+       * - analytics
+       * - live dashboard
        */
     }
 
@@ -136,60 +210,55 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const status =
-      body?.status;
+    const status = body?.status;
 
     if (status) {
-      console.log(
-        "MESSAGEBIRD DELIVERY STATUS:"
-      );
+      console.log("MESSAGEBIRD DELIVERY STATUS:");
 
       console.log({
-        id: body?.id,
+        doctor_id: integration?.doctor_id || null,
+
+        id: body?.id || null,
 
         status,
 
-        recipient:
-          body?.to,
+        recipient: body?.to || null,
 
-        timestamp:
-          body?.createdDatetime,
+        timestamp: body?.createdDatetime || null,
       });
 
       /**
        * FUTURE:
-       * - save delivery state
-       * - analytics
-       * - failed retry
+       * - delivery analytics
+       * - retries
+       * - failures
        */
     }
 
     /**
-     * IMPORTANT:
-     * Always acknowledge webhook
+     * =====================================
+     * ACKNOWLEDGE WEBHOOK
+     * =====================================
      */
 
     return NextResponse.json(
       {
         success: true,
-        message:
-          "Webhook received",
+
+        message: "Webhook received",
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (err) {
-    console.error(
-      "MESSAGEBIRD WEBHOOK POST ERROR:",
-      err
-    );
+    console.error("MESSAGEBIRD WEBHOOK POST ERROR:", err);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Webhook processing failed",
+
+        message: "Webhook processing failed",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

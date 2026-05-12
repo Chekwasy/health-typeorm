@@ -8,8 +8,18 @@ import bcrypt from "bcrypt";
 
 interface SignupBody {
   emailpwd: string;
+
   firstname: string;
+
   lastname: string;
+
+  /**
+   * NEW
+   */
+  title?: string;
+
+  phone?: string;
+
   role: "PATIENT" | "DOCTOR";
 }
 
@@ -18,46 +28,71 @@ export async function POST(request: Request): Promise<NextResponse> {
     await dbClient.init();
 
     const dd: SignupBody = await request.json();
-    const { emailpwd, firstname, lastname, role } = dd;
 
-    // Validate required fields
+    const { emailpwd, firstname, lastname, title, phone, role } = dd;
+
+    /**
+     * =====================================
+     * VALIDATION
+     * =====================================
+     */
+
     if (!emailpwd || !firstname || !lastname || !role) {
       return NextResponse.json(
-        { message: "Incomplete signup data" },
-        { status: 400 }
+        {
+          message: "Incomplete signup data",
+        },
+        { status: 400 },
       );
     }
 
     if (!["PATIENT", "DOCTOR"].includes(role)) {
       return NextResponse.json(
-        { message: "Invalid role selected" },
-        { status: 400 }
+        {
+          message: "Invalid role selected",
+        },
+        { status: 400 },
       );
     }
 
-    // Decode base64 email:password
+    /**
+     * =====================================
+     * DECODE BASE64 EMAIL:PASSWORD
+     * =====================================
+     */
+
     const encoded_usr_str = emailpwd.split(" ")[1];
+
     if (!encoded_usr_str) {
       return NextResponse.json(
-        { message: "Invalid encoded credentials" },
-        { status: 400 }
+        {
+          message: "Invalid encoded credentials",
+        },
+        { status: 400 },
       );
     }
 
     const decoded_usr_str = Buffer.from(encoded_usr_str, "base64").toString(
-      "utf-8"
+      "utf-8",
     );
 
     const [email, rawPassword] = decoded_usr_str.split(":");
 
     if (!email || !rawPassword) {
       return NextResponse.json(
-        { message: "Invalid email or password format" },
-        { status: 400 }
+        {
+          message: "Invalid email or password format",
+        },
+        { status: 400 },
       );
     }
 
-    // Validation
+    /**
+     * =====================================
+     * BASIC VALIDATION
+     * =====================================
+     */
+
     if (
       !checkpwd(email) ||
       !checkpwd(firstname) ||
@@ -65,33 +100,100 @@ export async function POST(request: Request): Promise<NextResponse> {
       !checkpwd(rawPassword)
     ) {
       return NextResponse.json(
-        { message: "Invalid input characters" },
-        { status: 400 }
+        {
+          message: "Invalid input characters",
+        },
+        { status: 400 },
       );
+    }
+
+    /**
+     * OPTIONAL TITLE VALIDATION
+     */
+
+    if (title !== undefined && title.trim().length > 50) {
+      return NextResponse.json(
+        {
+          message: "Title too long",
+        },
+        { status: 400 },
+      );
+    }
+
+    /**
+     * OPTIONAL PHONE VALIDATION
+     */
+
+    let normalizedPhone: string | undefined = undefined;
+
+    if (phone !== undefined && phone !== "") {
+      normalizedPhone = phone.replace(/\s+/g, "");
+
+      if (normalizedPhone.length < 7) {
+        return NextResponse.json(
+          {
+            message: "Invalid phone number",
+          },
+          { status: 400 },
+        );
+      }
     }
 
     const repo = dbClient.client.getRepository(Profile);
 
-    // Check if user already exists
-    const existing = await repo.findOne({ where: { email } });
+    /**
+     * =====================================
+     * CHECK EXISTING USER
+     * =====================================
+     */
+
+    const existing = await repo.findOne({
+      where: {
+        email,
+      },
+    });
 
     if (existing) {
       return NextResponse.json(
-        { message: "User already exists" },
-        { status: 400 }
+        {
+          message: "User already exists",
+        },
+        { status: 400 },
       );
     }
 
-    // Hash password
+    /**
+     * =====================================
+     * HASH PASSWORD
+     * =====================================
+     */
+
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
-    // Create Profile ONLY
+    /**
+     * =====================================
+     * CREATE PROFILE
+     * =====================================
+     */
+
     const newUser = repo.create({
       email,
-      first_name: firstname,
-      last_name: lastname,
+
+      first_name: firstname.trim(),
+
+      last_name: lastname.trim(),
+
+      /**
+       * NEW FIELDS
+       */
+      title: title?.trim() || undefined,
+
+      phone: normalizedPhone || undefined,
+
       role,
+
       password: hashedPassword,
+
       is_profile_complete: false,
     });
 
@@ -99,21 +201,26 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json(
       {
-        success: email,
+        success: true,
+
+        email,
+
         role,
-        nextStep:
-          role === "DOCTOR"
-            ? "/auth/login"
-            : "/auth/login",
+
+        nextStep: "/auth/login",
+
         message: "Signup successful. Complete your profile.",
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (err) {
     console.error(err);
+
     return NextResponse.json(
-      { message: "Error processing signup" },
-      { status: 500 }
+      {
+        message: "Error processing signup",
+      },
+      { status: 500 },
     );
   }
 }

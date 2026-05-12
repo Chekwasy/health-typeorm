@@ -48,10 +48,9 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            err.message || "Unauthorized",
+          message: err.message || "Unauthorized",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
@@ -73,10 +72,9 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "'to' is required",
+          message: "'to' is required",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -84,10 +82,9 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "Either message or template_name is required",
+          message: "Either message or template_name is required",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -96,13 +93,11 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            "Failed to send WhatsApp message",
+          message: "Failed to send WhatsApp message",
 
-          error_code:
-            "META_SEND_FAILED",
+          error_code: "META_SEND_FAILED",
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -117,75 +112,66 @@ export async function POST(req: Request) {
      */
 
     if (sendby === "HOST") {
-      senderPhoneNumber =
-        process.env.META_PHONE_NUMBER ||
-        "+15550000000";
+      senderPhoneNumber = process.env.META_PHONE_NUMBER || "+15550000000";
 
-      phone_number_id =
-        process.env
-          .META_PHONE_NUMBER_ID ||
-        "";
+      phone_number_id = process.env.META_PHONE_NUMBER_ID || "";
 
-      access_token =
-        process.env
-          .META_ACCESS_TOKEN ||
-        "";
-    }
-
-    /**
-     * =====================================
-     * USER SEND (doctor integration)
-     * =====================================
-     */
-
-    else {
+      access_token = process.env.META_ACCESS_TOKEN || "";
+    } else {
+      /**
+       * =====================================
+       * USER SEND (doctor integration)
+       * =====================================
+       */
       const integrationRepo =
-        dbClient.client.getRepository(
-          WhatsAppIntegration
-        );
+        dbClient.client.getRepository(WhatsAppIntegration);
 
-      const integration =
-        await integrationRepo.findOne({
-          where: {
-            doctor_id,
-            provider:
-              "META_WHATSAPP",
-          },
-        });
+      const integration = await integrationRepo.findOne({
+        where: {
+          doctor_id,
+          provider: "META_WHATSAPP",
+        },
+      });
 
       if (!integration) {
         return NextResponse.json(
           {
             success: false,
-            message:
-              "Doctor does not have Meta WhatsApp connected",
+            message: "Doctor does not have Meta WhatsApp connected",
           },
-          { status: 404 }
+          { status: 404 },
         );
       }
 
-      if (
-        integration.onboarding_status !==
-        "CONNECTED"
-      ) {
+      if (integration.onboarding_status !== "CONNECTED") {
         return NextResponse.json(
           {
             success: false,
-            message:
-              "Doctor WhatsApp integration is not active",
+            message: "Doctor WhatsApp integration is not active",
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
 
-      senderPhoneNumber =
-        integration.phone_number;
+      /**
+       * VALIDATE REQUIRED META CONFIG
+       */
 
-      phone_number_id =
-        integration.phone_number_id;
+      if (!integration.phone_number_id || !integration.access_token) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Incomplete Meta integration configuration",
+          },
+          { status: 400 },
+        );
+      }
 
-      access_token =
-        integration.access_token;
+      senderPhoneNumber = integration.phone_number;
+
+      phone_number_id = integration.phone_number_id;
+
+      access_token = integration.access_token;
     }
 
     /**
@@ -195,24 +181,19 @@ export async function POST(req: Request) {
      */
 
     if (test) {
-      const mockMessageId =
-        `mock_msg_${Date.now()}`;
+      const mockMessageId = `mock_msg_${Date.now()}`;
 
-      console.log(
-        "MOCK META SEND:",
-        {
-          sendby,
+      console.log("MOCK META SEND:", {
+        sendby,
 
-          from:
-            senderPhoneNumber,
+        from: senderPhoneNumber,
 
-          to,
+        to,
 
-          message,
+        message,
 
-          template_name,
-        }
-      );
+        template_name,
+      });
 
       return NextResponse.json(
         {
@@ -220,35 +201,27 @@ export async function POST(req: Request) {
 
           mode: "TEST_MODE",
 
-          message:
-            "Mock WhatsApp message sent successfully",
+          message: "Mock WhatsApp message sent successfully",
 
           data: {
-            provider:
-              "META_WHATSAPP",
+            provider: "META_WHATSAPP",
 
             sendby,
 
-            from:
-              senderPhoneNumber,
+            from: senderPhoneNumber,
 
             to,
 
-            text:
-              message || null,
+            text: message || null,
 
-            template_name:
-              template_name ||
-              null,
+            template_name: template_name || null,
 
-            message_id:
-              mockMessageId,
+            message_id: mockMessageId,
 
-            timestamp:
-              new Date(),
+            timestamp: new Date(),
           },
         },
-        { status: 200 }
+        { status: 200 },
       );
     }
 
@@ -260,16 +233,14 @@ export async function POST(req: Request) {
 
     const payload = template_name
       ? {
-          messaging_product:
-            "whatsapp",
+          messaging_product: "whatsapp",
 
           to,
 
           type: "template",
 
           template: {
-            name:
-              template_name,
+            name: template_name,
 
             language: {
               code: "en_US",
@@ -277,8 +248,7 @@ export async function POST(req: Request) {
           },
         }
       : {
-          messaging_product:
-            "whatsapp",
+          messaging_product: "whatsapp",
 
           to,
 
@@ -297,65 +267,49 @@ export async function POST(req: Request) {
         headers: {
           Authorization: `Bearer ${access_token}`,
 
-          "Content-Type":
-            "application/json",
+          "Content-Type": "application/json",
         },
 
-        body: JSON.stringify(
-          payload
-        ),
-      }
+        body: JSON.stringify(payload),
+      },
     );
 
-    const data =
-      await response.json();
+    const data = await response.json();
 
     /**
      * OPTIONAL:
      * Save outgoing message to DB here
      */
 
-    console.log(
-      "META PRODUCTION SEND:",
-      data
-    );
+    console.log("META PRODUCTION SEND:", data);
 
     return NextResponse.json(
       {
         success: response.ok,
 
-        mode:
-          "PRODUCTION_STYLE",
+        mode: "PRODUCTION_STYLE",
 
         sendby,
 
         meta_response: data,
 
-        message:
-          response.ok
-            ? "WhatsApp message sent successfully"
-            : "Meta send failed",
+        message: response.ok
+          ? "WhatsApp message sent successfully"
+          : "Meta send failed",
       },
       {
-        status:
-          response.ok
-            ? 200
-            : 400,
-      }
+        status: response.ok ? 200 : 400,
+      },
     );
   } catch (err) {
-    console.error(
-      "META SEND ERROR:",
-      err
-    );
+    console.error("META SEND ERROR:", err);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Failed to send Meta WhatsApp message",
+        message: "Failed to send Meta WhatsApp message",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -9,7 +9,12 @@ export async function GET(req: Request) {
   try {
     await dbClient.init();
 
-    // AUTH
+    /**
+     * =====================================
+     * AUTH
+     * =====================================
+     */
+
     let decoded: any;
 
     try {
@@ -18,31 +23,37 @@ export async function GET(req: Request) {
       return NextResponse.json(
         {
           success: false,
-          message:
-            err.message || "Unauthorized",
+
+          message: err.message || "Unauthorized",
         },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
     const doctor_id = decoded.userId;
 
-    const integrationRepo =
-      dbClient.client.getRepository(
-        WhatsAppIntegration
-      );
+    const integrationRepo = dbClient.client.getRepository(WhatsAppIntegration);
 
-    // FETCH MESSAGEBIRD INTEGRATION
-    const integration =
-      await integrationRepo.findOne({
-        where: {
-          doctor_id,
-          provider:
-            "MESSAGE_BIRD",
-        },
-      });
+    /**
+     * =====================================
+     * FETCH MESSAGEBIRD INTEGRATION
+     * =====================================
+     */
 
-    // NO INTEGRATION
+    const integration = await integrationRepo.findOne({
+      where: {
+        doctor_id,
+
+        provider: "MESSAGE_BIRD",
+      },
+    });
+
+    /**
+     * =====================================
+     * NO INTEGRATION
+     * =====================================
+     */
+
     if (!integration) {
       return NextResponse.json(
         {
@@ -50,92 +61,89 @@ export async function GET(req: Request) {
 
           connected: false,
 
-          provider:
-            "MESSAGE_BIRD",
+          provider: "MESSAGE_BIRD",
 
-          message:
-            "Doctor has not connected MessageBird",
+          message: "Doctor has not connected MessageBird",
 
           data: null,
         },
-        { status: 200 }
+        { status: 200 },
       );
     }
+
+    /**
+     * =====================================
+     * CONFIG VALIDATION
+     * =====================================
+     */
+
+    const configuration_complete = !!(
+      integration.access_token && integration.metadata?.channel_id
+    );
+
+    /**
+     * =====================================
+     * RESPONSE
+     * =====================================
+     */
 
     return NextResponse.json(
       {
         success: true,
 
-        connected:
-          integration.onboarding_status ===
-          "CONNECTED",
+        connected: integration.onboarding_status === "CONNECTED",
 
-        provider:
-          integration.provider,
+        provider: integration.provider,
 
         data: {
           id: integration.id,
 
-          doctor_id:
-            integration.doctor_id,
+          doctor_id: integration.doctor_id,
+
+          /**
+           * Helpful frontend flag
+           */
+          configuration_complete,
 
           business: {
-            name:
-              integration.business_name,
+            name: integration.business_name,
 
-            business_id:
-              integration.business_id,
+            business_id: integration.business_id,
           },
 
           whatsapp: {
-            phone_number:
-              integration.phone_number,
+            phone_number: integration.phone_number,
           },
 
           messagebird: {
-            channel_id:
-              integration.metadata
-                ?.channel_id ||
-              null,
+            channel_id: integration.metadata?.channel_id || null,
 
-            workspace_id:
-              integration.metadata
-                ?.workspace_id ||
-              null,
+            workspace_id: integration.metadata?.workspace_id || null,
           },
 
-          onboarding_status:
-            integration.onboarding_status,
+          onboarding_status: integration.onboarding_status,
 
-          webhook_status:
-            integration.webhook_status,
+          webhook_status: integration.webhook_status,
 
-          mock_mode:
-            integration.metadata
-              ?.mock_mode || false,
+          mock_mode: integration.metadata?.mock_mode || false,
 
-          created_at:
-            integration.created_at,
+          created_at: integration.created_at,
 
-          updated_at:
-            integration.updated_at,
+          updated_at: integration.updated_at,
         },
       },
-      { status: 200 }
+      { status: 200 },
     );
   } catch (err) {
-    console.error(
-      "MESSAGEBIRD STATUS ERROR:",
-      err
-    );
+    console.error("MESSAGEBIRD STATUS ERROR:", err);
 
     return NextResponse.json(
       {
         success: false,
-        message:
-          "Failed to fetch MessageBird integration status",
+
+        message: "Failed to fetch MessageBird integration status",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
