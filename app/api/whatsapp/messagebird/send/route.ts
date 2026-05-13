@@ -10,7 +10,20 @@ type SendBy = "USER" | "HOST";
 interface Body {
   to: string;
 
-  message: string;
+  /**
+   * Plain text fallback
+   */
+  message?: string;
+
+  /**
+   * Optional template support
+   */
+  template_name?: string;
+
+  /**
+   * Template placeholders
+   */
+  template_variables?: Record<string, string>;
 
   /**
    * USER -> doctor's integration
@@ -59,6 +72,8 @@ export async function POST(req: Request) {
     const {
       to,
       message,
+      template_name,
+      template_variables,
       sendby = "USER",
       test = false,
       simulate_failure,
@@ -81,12 +96,19 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!message) {
+    /**
+     * REQUIRE:
+     * - message
+     * OR
+     * - template_name
+     */
+
+    if (!message && !template_name) {
       return NextResponse.json(
         {
           success: false,
 
-          message: "'message' is required",
+          message: "Either message or template_name is required",
         },
         { status: 400 },
       );
@@ -116,7 +138,9 @@ export async function POST(req: Request) {
     }
 
     let senderPhoneNumber = "";
+
     let access_key = "";
+
     let channel_id = "";
 
     /**
@@ -148,11 +172,12 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      /**
-       * =====================================
-       * USER SEND
-       * =====================================
-       */
+
+    /**
+     * =====================================
+     * USER SEND
+     * =====================================
+     */
       const integrationRepo =
         dbClient.client.getRepository(WhatsAppIntegration);
 
@@ -218,6 +243,78 @@ export async function POST(req: Request) {
 
     /**
      * =====================================
+     * TEMPLATE VARIABLES
+     * =====================================
+     */
+
+    const variables = template_variables
+      ? Object.entries(template_variables)
+      : [];
+
+    /**
+     * =====================================
+     * MESSAGEBIRD DOES NOT
+     * NATIVELY WORK LIKE META
+     * TEMPLATE PLACEHOLDERS
+     *
+     * So we convert template
+     * variables into a clean
+     * generated text message.
+     * =====================================
+     */
+
+    let generatedMessage = message || "";
+
+    if (template_name && variables.length > 0) {
+      /**
+       * APPOINTMENT TEMPLATE
+       */
+
+      if (template_name === "appointment_booking") {
+        const doctorName = template_variables?.doctor_name || "Doctor";
+
+        const patientName = template_variables?.patient_name || "Patient";
+
+        const hospitalName = template_variables?.hospital_name || "Hospital";
+
+        const patientReason = template_variables?.patient_reason || "N/A";
+
+        const appointmentDate = template_variables?.appointment_date || "N/A";
+
+        const appointmentTime = template_variables?.appointment_time || "N/A";
+
+        generatedMessage = `🏥 ${hospitalName}
+
+Hello ${doctorName},
+
+You have a new appointment booking.
+
+👤 Patient:
+${patientName}
+
+📝 Reason:
+${patientReason}
+
+📅 Date:
+${appointmentDate}
+
+⏰ Time:
+${appointmentTime}
+
+Please check your dashboard for more details.`;
+      } else {
+
+      /**
+       * GENERIC TEMPLATE FALLBACK
+       */
+        generatedMessage =
+          `${template_name}\n\n` +
+          variables.map(([key, value]) => `${key}: ${value}`).join("\n");
+      }
+    }
+
+    /**
+     * =====================================
      * TEST MODE
      * =====================================
      */
@@ -232,7 +329,11 @@ export async function POST(req: Request) {
 
         to: normalizedTo,
 
-        message,
+        message: generatedMessage,
+
+        template_name,
+
+        template_variables,
       });
 
       return NextResponse.json(
@@ -252,7 +353,11 @@ export async function POST(req: Request) {
 
             to: normalizedTo,
 
-            text: message,
+            text: generatedMessage,
+
+            template_name: template_name || null,
+
+            template_variables: template_variables || null,
 
             message_id: mockMessageId,
 
@@ -277,7 +382,7 @@ export async function POST(req: Request) {
       type: "text",
 
       content: {
-        text: message,
+        text: generatedMessage,
       },
     };
 
@@ -301,7 +406,7 @@ export async function POST(req: Request) {
     /**
      * OPTIONAL:
      * Save outgoing message
-     * to DB here later
+     * later
      */
 
     console.log("MESSAGEBIRD PRODUCTION SEND:", data);
@@ -316,9 +421,13 @@ export async function POST(req: Request) {
 
         provider: "MESSAGE_BIRD",
 
+        template_name: template_name || null,
+
         message: response.ok
           ? "MessageBird WhatsApp message sent successfully"
           : "MessageBird send failed",
+
+        payload,
 
         messagebird_response: data,
       },

@@ -4,76 +4,6 @@ import { NextResponse } from "next/server";
 import dbClient from "@/lib/db";
 import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
 
-/**
- * =========================================
- * META WEBHOOK VERIFICATION
- * =========================================
- *
- * Meta calls this endpoint to verify:
- * - callback URL
- * - verify token
- */
-
-export async function GET(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-
-    const mode = searchParams.get("hub.mode");
-
-    const token = searchParams.get("hub.verify_token");
-
-    const challenge = searchParams.get("hub.challenge");
-
-    const verifyToken = process.env.META_VERIFY_TOKEN;
-
-    /**
-     * VERIFY TOKEN
-     */
-
-    if (mode === "subscribe" && token === verifyToken) {
-      console.log("META WEBHOOK VERIFIED");
-
-      return new Response(challenge, {
-        status: 200,
-      });
-    }
-
-    console.error("META WEBHOOK VERIFICATION FAILED");
-
-    return NextResponse.json(
-      {
-        success: false,
-
-        message: "Webhook verification failed",
-      },
-      { status: 403 },
-    );
-  } catch (err) {
-    console.error("META WEBHOOK GET ERROR:", err);
-
-    return NextResponse.json(
-      {
-        success: false,
-
-        message: "Webhook verification error",
-      },
-      { status: 500 },
-    );
-  }
-}
-
-/**
- * =========================================
- * META WEBHOOK EVENTS
- * =========================================
- *
- * Handles:
- * - incoming messages
- * - statuses
- * - media
- * - delivery updates
- */
-
 export async function POST(req: Request) {
   try {
     await dbClient.init();
@@ -81,7 +11,9 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     /**
+     * =====================================
      * LOG RAW PAYLOAD
+     * =====================================
      */
 
     console.log("META WEBHOOK EVENT:", JSON.stringify(body, null, 2));
@@ -116,9 +48,9 @@ export async function POST(req: Request) {
     const value = change?.value;
 
     /**
-     * IMPORTANT:
-     * Identify WHICH doctor
-     * owns this event.
+     * =====================================
+     * PHONE NUMBER ID
+     * =====================================
      */
 
     const phone_number_id = value?.metadata?.phone_number_id;
@@ -171,7 +103,7 @@ export async function POST(req: Request) {
       const type = incomingMessage.type;
 
       /**
-       * TEXT MESSAGE
+       * TEXT
        */
 
       const text = incomingMessage?.text?.body || null;
@@ -220,33 +152,147 @@ export async function POST(req: Request) {
 
     /**
      * =====================================
-     * MESSAGE STATUS
+     * DELIVERY STATUS
      * =====================================
      */
 
     const status = value?.statuses?.[0];
 
     if (status) {
-      console.log("WHATSAPP MESSAGE STATUS:");
+      /**
+       * NORMALIZE STATUS
+       */
 
-      console.log({
-        doctor_id: integration?.doctor_id || null,
-
-        id: status.id,
-
-        status: status.status,
-
-        recipient: status.recipient_id,
-
-        timestamp: status.timestamp,
-      });
+      const normalizedStatus = String(status?.status).toUpperCase();
 
       /**
-       * FUTURE:
-       * - save delivery state
-       * - retries
-       * - analytics
+       * COMMON DETAILS
        */
+
+      const messageId = status?.id || null;
+
+      const recipient = status?.recipient_id || null;
+
+      const timestamp = status?.timestamp || new Date().toISOString();
+
+      /**
+       * META ERRORS
+       */
+
+      const errorCode = status?.errors?.[0]?.code || null;
+
+      const errorTitle = status?.errors?.[0]?.title || null;
+
+      const errorMessage = status?.errors?.[0]?.message || null;
+
+      /**
+       * STATUS FLAGS
+       */
+
+      const isDelivered = ["DELIVERED", "READ"].includes(normalizedStatus);
+
+      const isPending = ["SENT", "ACCEPTED", "PENDING"].includes(
+        normalizedStatus,
+      );
+
+      const isFailure = ["FAILED", "REJECTED", "UNDELIVERABLE"].includes(
+        normalizedStatus,
+      );
+
+      /**
+       * DELIVERED
+       */
+
+      if (isDelivered) {
+        console.log("META MESSAGE DELIVERED:");
+
+        console.log({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+
+        /**
+         * FUTURE:
+         * - analytics
+         * - delivery tracking
+         * - dashboard updates
+         */
+      } else if (isPending) {
+
+      /**
+       * PENDING
+       */
+        console.log("META MESSAGE PENDING:");
+
+        console.log({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+      } else if (isFailure) {
+
+      /**
+       * FAILED
+       */
+        console.error("META MESSAGE FAILED:");
+
+        console.error({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          error_code: errorCode,
+
+          error_title: errorTitle,
+
+          error_message: errorMessage,
+
+          timestamp,
+        });
+
+        /**
+         * FUTURE:
+         * - retries
+         * - alerting
+         * - admin notifications
+         * - failed delivery DB tracking
+         */
+      } else {
+
+      /**
+       * UNKNOWN
+       */
+        console.warn("UNKNOWN META STATUS:");
+
+        console.warn({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+      }
     }
 
     /**

@@ -4,76 +4,6 @@ import { NextResponse } from "next/server";
 import dbClient from "@/lib/db";
 import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
 
-/**
- * =========================================
- * MESSAGEBIRD WEBHOOK VERIFICATION
- * =========================================
- *
- * Validates:
- * - webhook secret
- */
-
-export async function GET(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-
-    const secret = searchParams.get("secret");
-
-    const webhookSecret = process.env.MESSAGEBIRD_WEBHOOK_SECRET;
-
-    /**
-     * VERIFY SECRET
-     */
-
-    if (secret && secret === webhookSecret) {
-      console.log("MESSAGEBIRD WEBHOOK VERIFIED");
-
-      return NextResponse.json(
-        {
-          success: true,
-
-          message: "Webhook verified",
-        },
-        { status: 200 },
-      );
-    }
-
-    console.error("MESSAGEBIRD WEBHOOK VERIFICATION FAILED");
-
-    return NextResponse.json(
-      {
-        success: false,
-
-        message: "Webhook verification failed",
-      },
-      { status: 403 },
-    );
-  } catch (err) {
-    console.error("MESSAGEBIRD WEBHOOK GET ERROR:", err);
-
-    return NextResponse.json(
-      {
-        success: false,
-
-        message: "Webhook verification error",
-      },
-      { status: 500 },
-    );
-  }
-}
-
-/**
- * =========================================
- * MESSAGEBIRD WEBHOOK EVENTS
- * =========================================
- *
- * Handles:
- * - incoming messages
- * - statuses
- * - media
- * - delivery updates
- */
-
 export async function POST(req: Request) {
   try {
     await dbClient.init();
@@ -81,7 +11,9 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     /**
+     * =====================================
      * LOG RAW PAYLOAD
+     * =====================================
      */
 
     console.log("MESSAGEBIRD WEBHOOK EVENT:", JSON.stringify(body, null, 2));
@@ -90,8 +22,6 @@ export async function POST(req: Request) {
      * =====================================
      * EXTRACT CHANNEL ID
      * =====================================
-     *
-     * Different payloads may vary.
      */
 
     const channel_id =
@@ -112,10 +42,6 @@ export async function POST(req: Request) {
     if (channel_id) {
       const integrationRepo =
         dbClient.client.getRepository(WhatsAppIntegration);
-
-      /**
-       * JSONB QUERY
-       */
 
       integration = await integrationRepo
         .createQueryBuilder("integration")
@@ -210,29 +136,142 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const status = body?.status;
+    const status = body?.status || body?.message?.status || null;
 
     if (status) {
-      console.log("MESSAGEBIRD DELIVERY STATUS:");
+      /**
+       * NORMALIZE STATUS
+       */
 
-      console.log({
-        doctor_id: integration?.doctor_id || null,
-
-        id: body?.id || null,
-
-        status,
-
-        recipient: body?.to || null,
-
-        timestamp: body?.createdDatetime || null,
-      });
+      const normalizedStatus = String(status).toUpperCase();
 
       /**
-       * FUTURE:
-       * - delivery analytics
-       * - retries
-       * - failures
+       * COMMON DETAILS
        */
+
+      const messageId = body?.id || body?.message?.id || null;
+
+      const recipient = body?.to || body?.message?.to || null;
+
+      const timestamp =
+        body?.createdDatetime ||
+        body?.message?.createdDatetime ||
+        new Date().toISOString();
+
+      /**
+       * PROVIDER ERRORS
+       */
+
+      const errorCode = body?.error?.code || body?.errors?.[0]?.code || null;
+
+      const errorMessage =
+        body?.error?.message ||
+        body?.errors?.[0]?.description ||
+        body?.errors?.[0]?.message ||
+        null;
+
+      /**
+       * STATUS FLAGS
+       */
+
+      const isDelivered = ["DELIVERED", "READ"].includes(normalizedStatus);
+
+      const isPending = ["SENT", "QUEUED", "PENDING"].includes(
+        normalizedStatus,
+      );
+
+      const isFailure = [
+        "FAILED",
+        "REJECTED",
+        "EXPIRED",
+        "UNDELIVERED",
+      ].includes(normalizedStatus);
+
+      /**
+       * DELIVERED
+       */
+
+      if (isDelivered) {
+        console.log("MESSAGEBIRD MESSAGE DELIVERED:");
+
+        console.log({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+      } else if (isPending) {
+
+      /**
+       * PENDING
+       */
+        console.log("MESSAGEBIRD MESSAGE PENDING:");
+
+        console.log({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+      } else if (isFailure) {
+
+      /**
+       * FAILED
+       */
+        console.error("MESSAGEBIRD MESSAGE FAILED:");
+
+        console.error({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          error_code: errorCode,
+
+          error_message: errorMessage,
+
+          timestamp,
+        });
+
+        /**
+         * FUTURE:
+         * - retries
+         * - alerting
+         * - admin notifications
+         * - failed delivery DB tracking
+         */
+      } else {
+
+      /**
+       * UNKNOWN
+       */
+        console.warn("UNKNOWN MESSAGEBIRD STATUS:");
+
+        console.warn({
+          doctor_id: integration?.doctor_id || null,
+
+          message_id: messageId,
+
+          recipient,
+
+          status: normalizedStatus,
+
+          timestamp,
+        });
+      }
     }
 
     /**
