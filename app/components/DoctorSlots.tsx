@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import Cookies from "js-cookie";
 import toast from "react-hot-toast";
+import { useSelector } from "react-redux";
 
 export default function DoctorSlots({ doctorId }: { doctorId: string }) {
+  const { me } = useSelector((state: any) => state.mainState) || {};
   const [slots, setSlots] = useState<any[]>([]);
   const [doctor, setDoctor] = useState<any>(null);
 
@@ -146,53 +148,125 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
         })}`;
 
         /**
-         * SEND MESSAGE
+         * PATIENT NAME
          *
-         * Doctor number should ideally
-         * come from backend later.
+         * Comes from Redux user state
          */
 
-        await axios.post(
-          sendEndpoint,
-          {
-            /**
-             * TEMPORARY TEST MODE
-             */
-            test: true,
+        const patientName = me?.title
+          ? `${me.title} ${me.first_name} ${me.last_name}`
+          : `${me?.first_name || ""} ${me?.last_name || ""}`.trim();
 
-            simulate_failure: false, // Set to true to simulate a failure response from the provider
+        /**
+         * OPTIONAL
+         */
 
-            /**
-             * USE HOST OR USER
-             */
-            sendby: "HOST",
+        const hospitalName = "Health Care";
 
-            /**
-             * MESSAGE PAYLOAD
-             */
-            to: doctor?.phone || "+2348000000000",
+        /**
+         * =====================================
+         * META TEMPLATE SEND
+         * =====================================
+         */
 
-            message: `New Appointment Booking
+        if (provider === "META_WHATSAPP") {
+          await axios.post(
+            sendEndpoint,
+            {
+              /**
+               * TEST MODE
+               */
+              test: true,
 
-            Doctor: ${doctor?.name}
+              simulate_failure: false,
 
-            Patient Reason:
+              /**
+               * HOST / USER
+               */
+              sendby: "HOST",
+
+              /**
+               * DESTINATION
+               */
+              to: doctor?.phone || "+2348000000000",
+
+              /**
+               * META TEMPLATE
+               */
+              template_name: "appointment_booking",
+
+              /**
+               * PLACEHOLDERS
+               */
+              template_variables: {
+                doctor_name: doctor?.name || "Doctor",
+
+                patient_name: patientName,
+
+                hospital_name: hospitalName,
+
+                patient_reason: reason,
+
+                appointment_date: appointmentDate,
+
+                appointment_time: appointmentTime,
+              },
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            },
+          );
+        } else {
+
+        /**
+         * =====================================
+         * MESSAGEBIRD TEXT SEND
+         * =====================================
+         */
+          await axios.post(
+            sendEndpoint,
+            {
+              test: true,
+
+              simulate_failure: false,
+
+              sendby: "HOST",
+
+              to: doctor?.phone || "+2348000000000",
+
+              message: `🏥 ${hospitalName}
+
+            Hello ${doctor?.name || "Doctor"},
+
+            You have a new appointment booking.
+
+            👤 Patient:
+            ${patientName}
+
+            📝 Reason:
             ${reason}
 
-            Appointment Date:
+            📅 Date:
             ${appointmentDate}
 
-            Appointment Time:
+            ⏰ Time:
             ${appointmentTime}
 
-            Please check your dashboard for details.`,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
+            Please check your dashboard for more details.`,
             },
-          },
-        );
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            },
+          );
+        }
+
+        /**
+         * SUCCESS
+         */
 
         toast.success(
           `Doctor notified successfully via ${

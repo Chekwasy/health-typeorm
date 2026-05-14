@@ -30,6 +30,15 @@ export class DoctorProfile {
   bio!: string;
 
   /**
+   * Hospital or clinic affiliation
+   */
+  @Column({
+    type: "text",
+    nullable: true,
+  })
+  hospital_affiliation!: string;
+
+  /**
    * Years of experience
    */
   @Column({

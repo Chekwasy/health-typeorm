@@ -39,7 +39,7 @@ export async function GET() {
      */
 
     const envProviderSource =
-      (process.env.WHATSAPP_PROVIDER_SOURCE as ProviderSource) || "USE_ENV";
+      (process.env.WHATSAPP_PROVIDER_SOURCE as ProviderSource) || "USE_DB";
 
     /**
      * =====================================
@@ -229,7 +229,7 @@ export async function POST(req: Request) {
      */
 
     const envProviderSource =
-      (process.env.WHATSAPP_PROVIDER_SOURCE as ProviderSource) || "USE_ENV";
+      (process.env.WHATSAPP_PROVIDER_SOURCE as ProviderSource) || "USE_DB";
 
     /**
      * =====================================
