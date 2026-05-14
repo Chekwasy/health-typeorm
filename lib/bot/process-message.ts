@@ -16,6 +16,7 @@ import {
   hasReachedBookingLimit,
   isPastDate,
   suggestAlternativeSlots,
+  findAppointmentForCancellation,
 } from "./helpers";
 
 /**
@@ -37,15 +38,27 @@ export async function processMessage({
 
   channel?: string;
 }) {
+  /**
+   * =====================================
+   * ENSURE DB CONNECTION
+   * =====================================
+   */
+
   await dbClient.init();
 
   /**
    * =====================================
-   * LOAD CONVERSATION
+   * CONVERSATION REPOSITORY
    * =====================================
    */
 
   const conversationRepo = dbClient.client.getRepository(BotConversation);
+
+  /**
+   * =====================================
+   * LOAD EXISTING CONVERSATION
+   * =====================================
+   */
 
   let conversation = await conversationRepo.findOne({
     where: {
@@ -54,16 +67,31 @@ export async function processMessage({
   });
 
   /**
-   * CREATE MEMORY
+   * =====================================
+   * CREATE CONVERSATION IF NONE EXISTS
+   * =====================================
    */
 
   if (!conversation) {
+    /**
+     * CREATE EXPIRY
+     *
+     * Conversation expires
+     * after 10 minutes.
+     */
+
+    const expires = new Date();
+
+    expires.setMinutes(expires.getMinutes() + 10);
+
     conversation = conversationRepo.create({
       user_id,
 
       channel: channel as any,
 
       context: {},
+
+      expires_at: expires,
     });
 
     await conversationRepo.save(conversation);
@@ -71,7 +99,38 @@ export async function processMessage({
 
   /**
    * =====================================
-   * EXISTING MEMORY
+   * CHECK CONVERSATION EXPIRY
+   * =====================================
+   *
+   * If conversation expired,
+   * reset memory/context.
+   * =====================================
+   */
+
+  if (
+    conversation.expires_at &&
+    new Date() > new Date(conversation.expires_at)
+  ) {
+    console.log("BOT SESSION EXPIRED", {
+      user_id,
+    });
+
+    /**
+     * RESET MEMORY
+     */
+
+    conversation.context = {};
+
+    await conversationRepo.save(conversation);
+  }
+
+  /**
+   * =====================================
+   * LOAD CURRENT CONTEXT
+   * =====================================
+   *
+   * This stores temporary
+   * conversational memory.
    * =====================================
    */
 
@@ -79,7 +138,15 @@ export async function processMessage({
 
   /**
    * =====================================
-   * EXTRACT MESSAGE
+   * EXTRACT USER MESSAGE
+   * =====================================
+   *
+   * Extract:
+   * - intent
+   * - doctor
+   * - date
+   * - time
+   * - etc
    * =====================================
    */
 
@@ -93,7 +160,7 @@ export async function processMessage({
    * =====================================
    *
    * If user changes intent,
-   * reset conversational flow.
+   * update active intent.
    * =====================================
    */
 
@@ -103,17 +170,16 @@ export async function processMessage({
 
   /**
    * =====================================
-   * MERGE CONTEXT
+   * MERGE NEW DATA INTO MEMORY
+   * =====================================
+   *
+   * Preserve previous values
+   * unless new ones exist.
    * =====================================
    */
 
   const updatedContext = {
     ...context,
-
-    /**
-     * ONLY OVERWRITE
-     * IF VALUE EXISTS
-     */
 
     doctor_name: extracted.doctor_name || context.doctor_name,
 
@@ -122,6 +188,8 @@ export async function processMessage({
     appointment_date: extracted.appointment_date || context.appointment_date,
 
     time_period: extracted.time_period || context.time_period,
+
+    appointment_time: extracted.appointment_time || context.appointment_time,
 
     appointment_reference:
       extracted.appointment_reference || context.appointment_reference,
@@ -133,11 +201,32 @@ export async function processMessage({
 
   /**
    * =====================================
-   * SAVE MEMORY
+   * SAVE UPDATED MEMORY
    * =====================================
    */
 
   conversation.context = updatedContext;
+
+  /**
+   * =====================================
+   * EXTEND EXPIRY
+   * =====================================
+   *
+   * Every new interaction
+   * extends session by
+   * another 10 minutes.
+   * =====================================
+   */
+
+  const newExpiry = new Date();
+
+  newExpiry.setMinutes(newExpiry.getMinutes() + 10);
+
+  conversation.expires_at = newExpiry;
+
+  /**
+   * SAVE CHANGES
+   */
 
   await conversationRepo.save(conversation);
 
@@ -151,7 +240,7 @@ export async function processMessage({
 
   /**
    * =====================================
-   * GREETING
+   * GREETING FLOW
    * =====================================
    */
 
@@ -166,12 +255,16 @@ export async function processMessage({
 
   /**
    * =====================================
-   * VIEW APPOINTMENTS
+   * VIEW APPOINTMENTS FLOW
    * =====================================
    */
 
   if (activeIntent === "VIEW") {
     const appointments = await getUpcomingAppointments(user_id);
+
+    /**
+     * NO APPOINTMENTS
+     */
 
     if (!appointments.length) {
       return {
@@ -181,7 +274,15 @@ export async function processMessage({
       };
     }
 
+    /**
+     * PROFILE REPOSITORY
+     */
+
     const profileRepo = dbClient.client.getRepository(Profile);
+
+    /**
+     * BUILD RESPONSE
+     */
 
     const lines = await Promise.all(
       appointments.map(async (appointment, index) => {
@@ -217,40 +318,193 @@ ${appointment.id}`;
 
   /**
    * =====================================
-   * CANCEL APPOINTMENT
+   * CANCEL APPOINTMENT FLOW
    * =====================================
    */
 
   if (activeIntent === "CANCEL") {
     /**
-     * NEED REFERENCE
+     * ===================================
+     * TRY DIRECT REFERENCE FIRST
+     * ===================================
      */
 
-    if (!updatedContext.appointment_reference) {
-      return {
-        success: false,
+    if (updatedContext.appointment_reference) {
+      const result = await cancelAppointment(
+        updatedContext.appointment_reference,
+        user_id,
+      );
 
-        reply: "Please provide the appointment reference you want to cancel.",
+      return {
+        success: result.success,
+
+        reply: result.success
+          ? "Your appointment has been cancelled successfully."
+          : result.message,
       };
     }
 
-    const result = await cancelAppointment(
-      updatedContext.appointment_reference,
-      user_id,
-    );
+    /**
+     * ===================================
+     * FIND DOCTOR IF PROVIDED
+     * ===================================
+     */
+
+    let doctor = null;
+
+    /**
+     * DOCTOR NAME SEARCH
+     */
+
+    if (updatedContext.doctor_name) {
+      doctor = await findDoctorByName(updatedContext.doctor_name);
+    }
+
+    /**
+     * SPECIALIZATION SEARCH
+     */
+
+    if (!doctor && updatedContext.specialization) {
+      doctor = await findDoctorBySpecialization(updatedContext.specialization);
+    }
+
+    /**
+     * ===================================
+     * FIND MATCHING APPOINTMENTS
+     * ===================================
+     */
+
+    const matches = await findAppointmentForCancellation({
+      patient_id: user_id,
+
+      doctor_id: doctor?.id,
+
+      appointment_date: updatedContext.appointment_date,
+
+      appointment_time: updatedContext.appointment_time,
+    });
+
+    /**
+     * ===================================
+     * NO MATCH FOUND
+     * ===================================
+     */
+
+    if (!matches.length) {
+      return {
+        success: false,
+
+        reply: "I could not find any matching active appointment to cancel.",
+      };
+    }
+
+    /**
+     * ===================================
+     * MULTIPLE MATCHES
+     * ===================================
+     */
+
+    if (matches.length > 1) {
+      const profileRepo = dbClient.client.getRepository(Profile);
+
+      const options = await Promise.all(
+        matches.map(async (appointment, index) => {
+          const doctor = await profileRepo.findOne({
+            where: {
+              id: appointment.doctor_id,
+            },
+          });
+
+          const start = new Date(appointment.slot.start_time);
+
+          return `${index + 1}. ${doctor?.title || "Dr"} ${
+            doctor?.first_name
+          } ${doctor?.last_name}
+
+          Date:
+          ${start.toLocaleDateString()}
+
+          Time:
+          ${start.toLocaleTimeString()}`;
+        }),
+      );
+
+      return {
+        success: false,
+
+        reply: `I found multiple matching appointments.
+
+        Please specify which one you want to cancel:
+
+        ${options.join("\n\n")}`,
+      };
+    }
+
+    /**
+     * ===================================
+     * SINGLE MATCH FOUND
+     * ===================================
+     */
+
+    const appointment = matches[0];
+
+    /**
+     * CANCEL APPOINTMENT
+     */
+
+    const result = await cancelAppointment(appointment.id, user_id);
+
+    /**
+     * FAILURE
+     */
+
+    if (!result.success) {
+      return {
+        success: false,
+
+        reply: result.message,
+      };
+    }
+
+    /**
+     * FORMAT RESPONSE
+     */
+
+    const profileRepo = dbClient.client.getRepository(Profile);
+
+    const matchedDoctor = await profileRepo.findOne({
+      where: {
+        id: appointment.doctor_id,
+      },
+    });
+
+    const start = new Date(appointment.slot.start_time);
+
+    /**
+     * SUCCESS RESPONSE
+     */
 
     return {
-      success: result.success,
+      success: true,
 
-      reply: result.success
-        ? "Your appointment has been cancelled successfully."
-        : result.message,
+      reply: `Your appointment has been cancelled successfully.
+
+        Doctor:
+        ${matchedDoctor?.title || "Dr"} ${matchedDoctor?.first_name} ${
+          matchedDoctor?.last_name
+        }
+
+        Date:
+        ${start.toLocaleDateString()}
+
+        Time:
+        ${start.toLocaleTimeString()}`,
     };
   }
 
   /**
    * =====================================
-   * AVAILABILITY
+   * AVAILABILITY FLOW
    * =====================================
    */
 
@@ -265,13 +519,13 @@ ${appointment.id}`;
 
   /**
    * =====================================
-   * BOOK APPOINTMENT
+   * BOOK APPOINTMENT FLOW
    * =====================================
    */
 
   if (activeIntent === "BOOK") {
     /**
-     * MAX LIMIT
+     * MAX ACTIVE BOOKINGS
      */
 
     const limitReached = await hasReachedBookingLimit(user_id);
@@ -286,7 +540,7 @@ ${appointment.id}`;
     }
 
     /**
-     * NEED DOCTOR
+     * REQUIRE DOCTOR
      */
 
     if (!updatedContext.doctor_name && !updatedContext.specialization) {
@@ -303,12 +557,16 @@ ${appointment.id}`;
 
     let doctor = null;
 
+    /**
+     * SEARCH BY NAME
+     */
+
     if (updatedContext.doctor_name) {
       doctor = await findDoctorByName(updatedContext.doctor_name);
     }
 
     /**
-     * SPECIALIZATION
+     * SEARCH BY SPECIALIZATION
      */
 
     if (!doctor && updatedContext.specialization) {
@@ -328,7 +586,7 @@ ${appointment.id}`;
     }
 
     /**
-     * NEED DATE
+     * REQUIRE DATE
      */
 
     if (!updatedContext.appointment_date) {
@@ -340,7 +598,7 @@ ${appointment.id}`;
     }
 
     /**
-     * PAST DATE
+     * PREVENT PAST BOOKINGS
      */
 
     if (isPastDate(new Date(updatedContext.appointment_date))) {
@@ -352,19 +610,20 @@ ${appointment.id}`;
     }
 
     /**
-     * NEED TIME
+     * REQUIRE TIME PERIOD
      */
 
     if (!updatedContext.time_period) {
       return {
         success: false,
 
-        reply: "What time would you prefer? Morning, afternoon, or evening?",
+        reply:
+          "What time would you prefer? Morning, afternoon, evening, 7am, 14:00?, noon, etc.",
       };
     }
 
     /**
-     * FIND SLOT
+     * FIND AVAILABLE SLOT
      */
 
     const slot = await findAvailableSlot({
@@ -376,16 +635,20 @@ ${appointment.id}`;
     });
 
     /**
-     * NO SLOT
+     * SLOT NOT FOUND
      */
 
     if (!slot) {
+      /**
+       * GET ALTERNATIVES
+       */
+
       const alternatives = await suggestAlternativeSlots({
         doctor_id: doctor.id,
       });
 
       /**
-       * NONE
+       * NO ALTERNATIVES
        */
 
       if (!alternatives.length) {
@@ -395,6 +658,10 @@ ${appointment.id}`;
           reply: "No available slots were found for this doctor.",
         };
       }
+
+      /**
+       * FORMAT ALTERNATIVES
+       */
 
       const altText = alternatives
         .map((item) => {
@@ -411,13 +678,13 @@ ${appointment.id}`;
           doctor.last_name
         } is unavailable at that time.
 
-Available alternatives:
-${altText}`,
+      Available alternatives:
+      ${altText}`,
       };
     }
 
     /**
-     * CREATE BOOKING
+     * CREATE APPOINTMENT
      */
 
     const booking = await createAppointment({
@@ -431,7 +698,7 @@ ${altText}`,
     });
 
     /**
-     * FAILED
+     * BOOKING FAILED
      */
 
     if (!booking.success) {
@@ -443,7 +710,9 @@ ${altText}`,
     }
 
     /**
-     * RESET MEMORY
+     * CLEAR MEMORY
+     *
+     * Since booking completed.
      */
 
     conversation.context = {};
@@ -451,7 +720,7 @@ ${altText}`,
     await conversationRepo.save(conversation);
 
     /**
-     * SUCCESS
+     * FORMAT SUCCESS
      */
 
     const start = new Date(slot.start_time);
@@ -461,23 +730,23 @@ ${altText}`,
 
       reply: `Appointment booked successfully 🎉
 
-Doctor:
-${doctor.title || "Dr"} ${doctor.first_name} ${doctor.last_name}
+      Doctor:
+      ${doctor.title || "Dr"} ${doctor.first_name} ${doctor.last_name}
 
-Date:
-${start.toLocaleDateString()}
+      Date:
+      ${start.toLocaleDateString()}
 
-Time:
-${start.toLocaleTimeString()}
+      Time:
+      ${start.toLocaleTimeString()}
 
-Reference:
-${booking.appointment?.id}`,
+      Reference:
+      ${booking.appointment?.id || "N/A"}`,
     };
   }
 
   /**
    * =====================================
-   * FALLBACK
+   * FALLBACK RESPONSE
    * =====================================
    */
 

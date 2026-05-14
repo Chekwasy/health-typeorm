@@ -35,6 +35,8 @@ export interface ExtractedData {
 
   time_period: string | null;
 
+  appointment_time: string | null;
+
   appointment_reference: string | null;
 
   reason: string | null;
@@ -247,13 +249,53 @@ function detectIntent(message: string): ExtractedIntent {
  */
 
 function extractDoctorName(message: string) {
-  const patterns = [/(dr\.?\s+[a-z]+)/i, /(doctor\s+[a-z]+)/i];
+  /**
+   * COMMON WORDS
+   * THAT ARE NOT NAMES
+   */
+
+  const invalidWords = [
+    "for",
+    "tomorrow",
+    "today",
+    "appointment",
+    "booking",
+    "available",
+    "slot",
+    "morning",
+    "evening",
+    "afternoon",
+  ];
+
+  /**
+   * PATTERNS
+   */
+
+  const patterns = [/dr\.?\s+([a-z]+)/i, /doctor\s+([a-z]+)/i];
 
   for (const pattern of patterns) {
     const match = message.match(pattern);
 
     if (match) {
-      return match[0].replace(/doctor/i, "Dr").trim();
+      /**
+       * EXTRACT NAME ONLY
+       */
+
+      const possibleName = match[1]?.trim().toLowerCase();
+
+      /**
+       * INVALID WORD
+       */
+
+      if (invalidWords.includes(possibleName)) {
+        return null;
+      }
+
+      /**
+       * RETURN CLEAN
+       */
+
+      return `Dr ${match[1]}`;
     }
   }
 
@@ -284,14 +326,70 @@ function extractSpecialization(message: string) {
  * =========================================
  */
 
-function extractDate(message: string) {
-  const parsed = chrono.parse(message);
+function extractDate(rawMessage: string) {
+  /**
+   * NORMALIZE MESSAGE
+   */
+
+  let message = rawMessage.toLowerCase();
+
+  /**
+   * HANDLE NON-STANDARD PHRASES
+   */
+
+  message = message.replace(/next tomorrow/gi, "day after tomorrow");
+
+  /**
+   * "next 3 days"
+   * -> "in 3 days"
+   */
+
+  message = message.replace(/next (\d+) days?/gi, "in $1 days");
+
+  /**
+   * CREATE NIGERIA TIMEZONE
+   * REFERENCE DATE
+   */
+
+  const referenceDate = new Date(
+    new Date().toLocaleString("en-US", {
+      timeZone: "Africa/Lagos",
+    }),
+  );
+
+  /**
+   * PARSE DATE
+   */
+
+  const parsed = chrono.parse(message, referenceDate);
+
+  /**
+   * NO DATE FOUND
+   */
 
   if (!parsed.length) {
     return null;
   }
 
-  return parsed[0].start.date();
+  /**
+   * EXTRACT DATE
+   */
+
+  const date = parsed[0].start.date();
+
+  /**
+   * LOGGING
+   */
+
+  console.log("DATE EXTRACTION:", {
+    rawMessage,
+
+    normalized: message,
+
+    parsed_date: date,
+  });
+
+  return date;
 }
 
 /**
@@ -300,56 +398,379 @@ function extractDate(message: string) {
  * =========================================
  */
 
-function extractTimePeriod(message: string) {
+function extractTimeData(message: string) {
+  /**
+   * DEFAULTS
+   */
+
+  let time_period = null;
+
+  let appointment_time = null;
+
+  /**
+   * PERIOD DETECTION
+   */
+
   if (message.includes("morning")) {
-    return "morning";
+    time_period = "morning";
   }
 
   if (message.includes("afternoon")) {
-    return "afternoon";
+    time_period = "afternoon";
   }
 
   if (message.includes("evening")) {
-    return "evening";
+    time_period = "evening";
   }
 
   if (message.includes("night")) {
-    return "night";
+    time_period = "night";
   }
 
   /**
-   * DIRECT TIME MATCH
+   * =====================================
+   * 12-HOUR FORMAT
+   * =====================================
+   *
+   * Examples:
+   * 5pm
+   * 10:30am
+   * =====================================
    */
 
-  if (/\b([1-9]|1[0-2])\s?(am|pm)\b/i.test(message)) {
-    return "specific";
+  const twelveHourMatch = message.match(
+    /\b(1[0-2]|[1-9])(?::([0-5][0-9]))?\s?(am|pm)\b/i,
+  );
+
+  if (twelveHourMatch) {
+    const rawHour = parseInt(twelveHourMatch[1]);
+
+    const minutes = twelveHourMatch[2] || "00";
+
+    const meridian = twelveHourMatch[3].toLowerCase();
+
+    let hour = rawHour;
+
+    /**
+     * PM CONVERSION
+     */
+
+    if (meridian === "pm" && hour !== 12) {
+      hour += 12;
+    }
+
+    /**
+     * AM MIDNIGHT
+     */
+
+    if (meridian === "am" && hour === 12) {
+      hour = 0;
+    }
+
+    appointment_time = `${String(hour).padStart(2, "0")}:${minutes}`;
   }
 
-  return null;
+  /**
+   * =====================================
+   * 24-HOUR FORMAT
+   * =====================================
+   *
+   * Examples:
+   * 14:00
+   * 18:30
+   * =====================================
+   */
+
+  const twentyFourHourMatch = message.match(
+    /\b([01]?[0-9]|2[0-3]):([0-5][0-9])\b/,
+  );
+
+  if (twentyFourHourMatch) {
+    appointment_time = `${twentyFourHourMatch[1].padStart(2, "0")}:${
+      twentyFourHourMatch[2]
+    }`;
+  }
+
+  /**
+   * AUTO PERIOD FROM TIME
+   */
+
+  if (appointment_time && !time_period) {
+    const hour = parseInt(appointment_time.split(":")[0]);
+
+    if (hour >= 6 && hour < 12) {
+      time_period = "morning";
+    } else if (hour >= 12 && hour < 17) {
+      time_period = "afternoon";
+    } else if (hour >= 17 && hour < 22) {
+      time_period = "evening";
+    } else {
+      time_period = "night";
+    }
+  }
+
+  return {
+    time_period,
+
+    appointment_time,
+  };
 }
 
 /**
  * =========================================
- * EXTRACT REASON
+ * EXTRACT APPOINTMENT REASON
+ * =========================================
+ *
+ * Attempts to infer the reason
+ * for the consultation from
+ * conversational language.
+ *
+ * Used for:
+ * - booking metadata
+ * - doctor context
+ * - future AI improvements
+ * - analytics/reporting
  * =========================================
  */
 
 function extractReason(message: string) {
-  if (message.includes("skin")) {
+  /**
+   * NORMALIZE
+   */
+
+  const text = message.toLowerCase();
+
+  /**
+   * =====================================
+   * SKIN / DERMATOLOGY
+   * =====================================
+   */
+
+  if (
+    [
+      "skin",
+      "rash",
+      "eczema",
+      "acne",
+      "pimple",
+      "allergy",
+      "itching",
+      "dermatology",
+      "fungal",
+      "infection",
+    ].some((word) => text.includes(word))
+  ) {
     return "Skin consultation";
   }
 
-  if (message.includes("heart")) {
+  /**
+   * =====================================
+   * HEART / CARDIOLOGY
+   * =====================================
+   */
+
+  if (
+    [
+      "heart",
+      "chest pain",
+      "heartbeat",
+      "high blood pressure",
+      "bp",
+      "cardiology",
+      "palpitations",
+      "hypertension",
+    ].some((word) => text.includes(word))
+  ) {
     return "Heart consultation";
   }
 
-  if (message.includes("tooth") || message.includes("dental")) {
+  /**
+   * =====================================
+   * DENTAL
+   * =====================================
+   */
+
+  if (
+    [
+      "tooth",
+      "teeth",
+      "gum",
+      "dental",
+      "dentist",
+      "toothache",
+      "mouth pain",
+      "cavity",
+    ].some((word) => text.includes(word))
+  ) {
     return "Dental consultation";
   }
 
-  if (message.includes("child") || message.includes("baby")) {
+  /**
+   * =====================================
+   * PEDIATRIC
+   * =====================================
+   */
+
+  if (
+    ["child", "children", "baby", "kid", "infant", "pediatric", "newborn"].some(
+      (word) => text.includes(word),
+    )
+  ) {
     return "Pediatric consultation";
   }
+
+  /**
+   * =====================================
+   * FEVER / GENERAL ILLNESS
+   * =====================================
+   */
+
+  if (
+    [
+      "fever",
+      "malaria",
+      "body pain",
+      "weakness",
+      "tired",
+      "fatigue",
+      "headache",
+      "illness",
+      "sick",
+      "infection",
+    ].some((word) => text.includes(word))
+  ) {
+    return "General medical consultation";
+  }
+
+  /**
+   * =====================================
+   * STOMACH / DIGESTIVE
+   * =====================================
+   */
+
+  if (
+    [
+      "stomach",
+      "ulcer",
+      "vomiting",
+      "diarrhea",
+      "constipation",
+      "abdominal pain",
+      "digestion",
+      "food poisoning",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Digestive consultation";
+  }
+
+  /**
+   * =====================================
+   * EYE
+   * =====================================
+   */
+
+  if (
+    [
+      "eye",
+      "eyes",
+      "vision",
+      "blurred vision",
+      "eye pain",
+      "sight",
+      "ophthalmology",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Eye consultation";
+  }
+
+  /**
+   * =====================================
+   * ENT
+   * =====================================
+   */
+
+  if (
+    [
+      "ear",
+      "nose",
+      "throat",
+      "tonsil",
+      "sinus",
+      "hearing",
+      "voice",
+      "ent",
+    ].some((word) => text.includes(word))
+  ) {
+    return "ENT consultation";
+  }
+
+  /**
+   * =====================================
+   * ORTHOPEDIC
+   * =====================================
+   */
+
+  if (
+    [
+      "leg pain",
+      "arm pain",
+      "joint pain",
+      "bone",
+      "fracture",
+      "waist pain",
+      "back pain",
+      "orthopedic",
+      "muscle pain",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Orthopedic consultation";
+  }
+
+  /**
+   * =====================================
+   * WOMEN HEALTH
+   * =====================================
+   */
+
+  if (
+    [
+      "pregnancy",
+      "menstrual",
+      "period pain",
+      "fertility",
+      "gynecology",
+      "woman",
+      "women health",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Gynecology consultation";
+  }
+
+  /**
+   * =====================================
+   * MENTAL HEALTH
+   * =====================================
+   */
+
+  if (
+    [
+      "depression",
+      "stress",
+      "anxiety",
+      "mental health",
+      "panic",
+      "therapy",
+      "psychiatric",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Mental health consultation";
+  }
+
+  /**
+   * =====================================
+   * DEFAULT
+   * =====================================
+   */
 
   return "General consultation";
 }
@@ -361,10 +782,26 @@ function extractReason(message: string) {
  */
 
 function extractAppointmentReference(message: string) {
-  const match = message.match(/\b[a-z0-9]{6,}\b/i);
+  /**
+   * UUID MATCH
+   */
 
-  if (match) {
-    return match[0];
+  const uuidMatch = message.match(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+  );
+
+  if (uuidMatch) {
+    return uuidMatch[0];
+  }
+
+  /**
+   * FALLBACK SIMPLE REFERENCE
+   */
+
+  const simpleMatch = message.match(/\b[a-z0-9]{6,}\b/i);
+
+  if (simpleMatch) {
+    return simpleMatch[0];
   }
 
   return null;
@@ -395,7 +832,8 @@ export function extractMessage(rawMessage: string): ExtractedData {
 
   const appointment_date = extractDate(normalizedMessage);
 
-  const time_period = extractTimePeriod(normalizedMessage);
+  const { time_period = null, appointment_time = null } =
+    extractTimeData(normalizedMessage);
 
   const appointment_reference = extractAppointmentReference(normalizedMessage);
 
@@ -419,6 +857,8 @@ export function extractMessage(rawMessage: string): ExtractedData {
     appointment_date,
 
     time_period,
+
+    appointment_time,
 
     appointment_reference,
 
