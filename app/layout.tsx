@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "react-hot-toast";
 import "react-phone-input-2/lib/style.css";
-import Providers from "@/app/providers"; 
+import Providers from "@/app/providers";
 import "./globals.css";
+import PatientBotChat from "@/app/components/bot/PatientBotChat";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,7 +31,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+
+          <PatientBotChat />
+        </Providers>
 
         {/* Toast stays here (this is fine) */}
         <Toaster
