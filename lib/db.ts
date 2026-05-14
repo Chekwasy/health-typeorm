@@ -7,6 +7,8 @@ import { DoctorProfile } from "@/entities/DoctorProfile";
 import { PatientProfile } from "@/entities/PatientProfile";
 import { Setting } from "@/entities/Settings";
 import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
+import { BotMessage } from "@/entities/BotMessage";
+import { BotConversation } from "@/entities/BotConversation";
 
 let AppDataSource: DataSource;
 
@@ -24,7 +26,9 @@ if (!(global as any).AppDataSource) {
       DoctorProfile,
       PatientProfile,
       Setting,
-      WhatsAppIntegration
+      WhatsAppIntegration,
+      BotMessage,
+      BotConversation,
     ],
 
     synchronize: true, // keep only for dev
