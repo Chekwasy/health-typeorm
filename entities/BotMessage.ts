@@ -3,53 +3,19 @@ import {
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
-  UpdateDateColumn,
-  ManyToOne,
-  JoinColumn,
 } from "typeorm";
 
-import { BotConversation } from "./BotConversation";
-
 /**
  * =========================================
- * MESSAGE SENDER
+ * BOT MESSAGE ENTITY
  * =========================================
- */
-
-export type BotMessageSender = "USER" | "BOT" | "SYSTEM";
-
-/**
- * =========================================
- * MESSAGE TYPE
- * =========================================
- */
-
-export type BotMessageType =
-  | "TEXT"
-  | "IMAGE"
-  | "AUDIO"
-  | "VIDEO"
-  | "DOCUMENT"
-  | "TEMPLATE"
-  | "INTERACTIVE";
-
-/**
- * =========================================
- * DELIVERY STATUS
- * =========================================
- */
-
-export type BotMessageStatus =
-  | "PENDING"
-  | "SENT"
-  | "DELIVERED"
-  | "READ"
-  | "FAILED"
-  | "REJECTED";
-
-/**
- * =========================================
- * BOT MESSAGE
+ *
+ * Stores:
+ * - user messages
+ * - bot replies
+ * - extracted NLP data
+ * - debugging metadata
+ * - analytics data
  * =========================================
  */
 
@@ -57,12 +23,23 @@ export type BotMessageStatus =
 export class BotMessage {
   /**
    * =====================================
-   * PRIMARY ID
+   * PRIMARY KEY
    * =====================================
    */
 
   @PrimaryGeneratedColumn("uuid")
   id!: string;
+
+  /**
+   * =====================================
+   * USER ID
+   * =====================================
+   */
+
+  @Column({
+    type: "uuid",
+  })
+  user_id!: string;
 
   /**
    * =====================================
@@ -72,54 +49,49 @@ export class BotMessage {
 
   @Column({
     type: "uuid",
+
+    nullable: true,
   })
-  conversation_id!: string;
-
-  /**
-   * =====================================
-   * CONVERSATION RELATION
-   * =====================================
-   */
-
-  @ManyToOne(() => BotConversation, {
-    onDelete: "CASCADE",
-  })
-  @JoinColumn({
-    name: "conversation_id",
-  })
-  conversation!: BotConversation;
-
-  /**
-   * =====================================
-   * MESSAGE SENDER
-   * =====================================
-   */
-
-  @Column({
-    type: "enum",
-
-    enum: ["USER", "BOT", "SYSTEM"],
-
-    default: "USER",
-  })
-  sender!: BotMessageSender;
+  conversation_id!: string | null;
 
   /**
    * =====================================
    * CHANNEL
+   * =====================================
+   *
+   * WEB
+   * WHATSAPP
+   * TELEGRAM
+   * etc
    * =====================================
    */
 
   @Column({
     type: "varchar",
 
-    nullable: true,
+    default: "WEB",
   })
-  channel!: string | null;
+  channel!: string;
 
   /**
    * =====================================
-   * MESSAGE CONTENT
+   * SENDER
+   * =====================================
+   *
+   * USER
+   * BOT
+   * SYSTEM
+   * =====================================
+   */
+
+  @Column({
+    type: "varchar",
+  })
+  sender!: string;
+
+  /**
+   * =====================================
+   * RAW MESSAGE
    * =====================================
    */
 
@@ -130,26 +102,20 @@ export class BotMessage {
 
   /**
    * =====================================
-   * MESSAGE TYPE
+   * SUCCESS STATUS
+   * =====================================
+   *
+   * Indicates whether
+   * processing succeeded.
    * =====================================
    */
 
   @Column({
-    type: "enum",
+    type: "boolean",
 
-    enum: [
-      "TEXT",
-      "IMAGE",
-      "AUDIO",
-      "VIDEO",
-      "DOCUMENT",
-      "TEMPLATE",
-      "INTERACTIVE",
-    ],
-
-    default: "TEXT",
+    default: true,
   })
-  message_type!: BotMessageType;
+  success!: boolean;
 
   /**
    * =====================================
@@ -168,141 +134,22 @@ export class BotMessage {
    * =====================================
    * EXTRACTED ENTITIES
    * =====================================
-   */
-
-  @Column({
-    type: "jsonb",
-
-    default: {},
-
-    nullable: false,
-  })
-  extracted_entities!: Record<string, any>;
-
-  /**
-   * =====================================
-   * PROVIDER
-   * =====================================
-   */
-
-  @Column({
-    type: "varchar",
-
-    nullable: true,
-  })
-  provider!: string | null;
-
-  /**
-   * =====================================
-   * PROVIDER MESSAGE ID
-   * =====================================
-   */
-
-  @Column({
-    type: "varchar",
-
-    nullable: true,
-  })
-  provider_message_id!: string | null;
-
-  /**
-   * =====================================
-   * DELIVERY STATUS
-   * =====================================
-   */
-
-  @Column({
-    type: "enum",
-
-    enum: ["PENDING", "SENT", "DELIVERED", "READ", "FAILED", "REJECTED"],
-
-    default: "PENDING",
-  })
-  delivery_status!: BotMessageStatus;
-
-  /**
-   * =====================================
-   * ERROR CODE
-   * =====================================
-   */
-
-  @Column({
-    type: "varchar",
-
-    nullable: true,
-  })
-  error_code!: string | null;
-
-  /**
-   * =====================================
-   * ERROR MESSAGE
-   * =====================================
-   */
-
-  @Column({
-    type: "text",
-
-    nullable: true,
-  })
-  error_message!: string | null;
-
-  /**
-   * =====================================
-   * TEMPLATE NAME
-   * =====================================
-   */
-
-  @Column({
-    type: "varchar",
-
-    nullable: true,
-  })
-  template_name!: string | null;
-
-  /**
-   * =====================================
-   * TEMPLATE VARIABLES
+   *
+   * Stores extracted NLP data:
+   * - doctor
+   * - date
+   * - time
+   * - specialization
+   * etc
    * =====================================
    */
 
   @Column({
     type: "jsonb",
 
-    default: {},
-
-    nullable: false,
+    nullable: true,
   })
-  template_variables!: Record<string, any>;
-
-  /**
-   * =====================================
-   * RAW PROVIDER PAYLOAD
-   * =====================================
-   */
-
-  @Column({
-    type: "jsonb",
-
-    default: {},
-
-    nullable: false,
-  })
-  raw_payload!: Record<string, any>;
-
-  /**
-   * =====================================
-   * OPTIONAL METADATA
-   * =====================================
-   */
-
-  @Column({
-    type: "jsonb",
-
-    default: {},
-
-    nullable: false,
-  })
-  metadata!: Record<string, any>;
+  extracted_entities!: Record<string, any> | null;
 
   /**
    * =====================================
@@ -310,19 +157,6 @@ export class BotMessage {
    * =====================================
    */
 
-  @CreateDateColumn({
-    type: "timestamptz",
-  })
+  @CreateDateColumn()
   created_at!: Date;
-
-  /**
-   * =====================================
-   * UPDATED AT
-   * =====================================
-   */
-
-  @UpdateDateColumn({
-    type: "timestamptz",
-  })
-  updated_at!: Date;
 }
