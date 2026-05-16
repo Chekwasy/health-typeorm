@@ -4,7 +4,11 @@ import { NextResponse } from "next/server";
 
 import { requireAuth } from "@/lib/auth";
 
-import { processMessage } from "@/lib/bot/process-message";
+import dbClient from "@/lib/db";
+
+import { BotMessage } from "@/entities/BotMessage";
+
+import { processMessage } from "@/lib/bot/process-message/process-message";
 
 /**
  * =========================================
@@ -79,6 +83,52 @@ export async function POST(req: Request) {
 
       channel: "WEB",
     });
+
+    /**
+     * =====================================
+     * SAVE USER MESSAGE
+     * =====================================
+     */
+
+    await dbClient.init();
+
+    const botMessageRepo = dbClient.client.getRepository(BotMessage);
+
+    /**
+     * USER MESSAGE
+     */
+
+    await botMessageRepo.save(
+      botMessageRepo.create({
+        user_id,
+
+        sender: "USER",
+
+        channel: "WEB",
+
+        message,
+
+        success: true,
+      }),
+    );
+
+    /**
+     * BOT RESPONSE
+     */
+
+    await botMessageRepo.save(
+      botMessageRepo.create({
+        user_id,
+
+        sender: "BOT",
+
+        channel: "WEB",
+
+        message: result.reply,
+
+        success: result.success,
+      }),
+    );
 
     /**
      * =====================================

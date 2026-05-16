@@ -219,12 +219,11 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
             },
           );
         } else {
-
-        /**
-         * =====================================
-         * MESSAGEBIRD TEXT SEND
-         * =====================================
-         */
+          /**
+           * =====================================
+           * MESSAGEBIRD TEXT SEND
+           * =====================================
+           */
           await axios.post(
             sendEndpoint,
             {
@@ -376,6 +375,15 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
                       : "bg-white/10 hover:bg-white/20"
                   }`}
                 >
+                  {/* DATE */}
+                  <p className="text-sm text-gray-300">
+                    {start.toLocaleDateString([], {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </p>
                   {/* TIME */}
                   <p className="font-semibold">
                     {start.toLocaleTimeString([], {
