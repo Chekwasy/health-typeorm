@@ -45,7 +45,11 @@ export function detectIntent(message: string): ExtractedIntent {
 
   if (
     message.includes("cancel") &&
-    (message.includes("appointment") || message.includes("booking"))
+    (message.includes("apponitment") ||
+      message.includes("appointment") ||
+      message.includes("booking") ||
+      message.includes("appointments") ||
+      message.includes("bookings"))
   ) {
     return "CANCEL";
   }
@@ -56,8 +60,10 @@ export function detectIntent(message: string): ExtractedIntent {
 
   if (
     message.includes("my appointments") ||
+    message.includes("show my appointment") ||
     message.includes("my bookings") ||
     message.includes("upcoming") ||
+    message.includes("my upcoming") ||
     message.includes("show appointments") ||
     message.includes("show bookings")
   ) {

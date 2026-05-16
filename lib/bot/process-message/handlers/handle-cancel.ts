@@ -13,14 +13,12 @@ import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-special
  * HANDLE CANCEL APPOINTMENT
  * =========================================
  *
- * Purpose:
- * - cancel using reference
- * - cancel conversationally
- * - support:
- *   - doctor
- *   - date
- *   - time
- * - support multiple matches
+ * Improved flow:
+ * - supports conversational cancel
+ * - supports appointment reference
+ * - graceful fallback handling
+ * - follow-up questions
+ * - avoids hard failures
  * =========================================
  */
 
@@ -35,22 +33,119 @@ export async function handleCancel({
 }) {
   /**
    * =====================================
-   * DIRECT REFERENCE CANCELLATION
+   * ENSURE DB CONNECTION
    * =====================================
    */
 
-  if (context.appointment_reference) {
-    const result = await cancelAppointment(
-      context.appointment_reference,
-      user_id,
-    );
+  await dbClient.init();
 
+  /**
+   * =====================================
+   * PROFILE REPOSITORY
+   * =====================================
+   */
+
+  const profileRepo = dbClient.client.getRepository(Profile);
+
+  /**
+   * =====================================
+   * CLEAN INVALID REFERENCES
+   * =====================================
+   *
+   * Sometimes extraction may wrongly
+   * capture words like:
+   * "cancel"
+   * "appointment"
+   * etc
+   * =====================================
+   */
+
+  const invalidReferences = ["cancel", "appointment", "booking", "doctor"];
+
+  /**
+   * CLEAN REFERENCE
+   */
+
+  let appointmentReference = context.appointment_reference;
+
+  if (
+    appointmentReference &&
+    invalidReferences.includes(String(appointmentReference).toLowerCase())
+  ) {
+    appointmentReference = null;
+  }
+
+  /**
+   * =====================================
+   * TRY DIRECT REFERENCE FIRST
+   * =====================================
+   */
+
+  if (appointmentReference) {
+    try {
+      /**
+       * ATTEMPT CANCELLATION
+       */
+
+      const result = await cancelAppointment(appointmentReference, user_id);
+
+      /**
+       * SUCCESS
+       */
+
+      if (result.success) {
+        return {
+          success: true,
+
+          reply: "Your appointment has been cancelled successfully.",
+        };
+      }
+
+      /**
+       * LOG FAILURE
+       */
+
+      console.log("REFERENCE CANCELLATION FAILED", {
+        reference: appointmentReference,
+
+        reason: result.message,
+      });
+
+      /**
+       * FALL THROUGH
+       *
+       * Continue conversational search
+       */
+    } catch (err) {
+      /**
+       * LOG ERROR
+       */
+
+      console.error("REFERENCE CANCELLATION ERROR", err);
+
+      /**
+       * FALL THROUGH
+       */
+    }
+  }
+
+  /**
+   * =====================================
+   * REQUIRE SOME CONTEXT
+   * =====================================
+   */
+
+  if (
+    !context.doctor_id &&
+    !context.doctor_name &&
+    !context.specialization &&
+    !context.appointment_date
+  ) {
     return {
-      success: result.success,
+      success: false,
 
-      reply: result.success
-        ? "Your appointment has been cancelled successfully."
-        : result.message,
+      reply:
+        "Which appointment would you like to cancel? You can mention the doctor name, date, or time.",
     };
   }
 
@@ -60,7 +155,31 @@ export async function handleCancel({
    * =====================================
    */
 
-  let doctor = context.doctor_name || null;
+  let doctor = null;
+
+  /**
+   * DOCTOR ID
+   */
+
+  if (context.doctor_id) {
+    doctor = await profileRepo.findOne({
+      where: {
+        id: context.doctor_id,
+      },
+    });
+  }
+
+  /**
+   * DOCTOR NAME
+   */
+
+  if (!doctor && context.doctor_name) {
+    doctor = await profileRepo.findOne({
+      where: {
+        id: context.doctor_id,
+      },
+    });
+  }
 
   /**
    * SPECIALIZATION SEARCH
@@ -93,6 +212,36 @@ export async function handleCancel({
    */
 
   if (!matches.length) {
+    /**
+     * MISSING DATE
+     */
+
+    if (!context.appointment_date) {
+      return {
+        success: false,
+
+        reply:
+          "I could not find a matching appointment. What date was the appointment scheduled for?",
+      };
+    }
+
+    /**
+     * MISSING TIME
+     */
+
+    if (!context.appointment_time && !context.time_period) {
+      return {
+        success: false,
+
+        reply:
+          "I could not find a matching appointment. What time was the appointment?",
+      };
+    }
+
+    /**
+     * GENERAL FAILURE
+     */
+
     return {
       success: false,
 
@@ -107,19 +256,9 @@ export async function handleCancel({
    */
 
   if (matches.length > 1) {
-    /**
-     * PROFILE REPOSITORY
-     */
-
-    const profileRepo = dbClient.client.getRepository(Profile);
-
-    /**
-     * BUILD OPTIONS
-     */
-
     const options = await Promise.all(
       matches.map(async (appointment, index) => {
-        const doctor = await profileRepo.findOne({
+        const matchedDoctor = await profileRepo.findOne({
           where: {
             id: appointment.doctor_id,
           },
@@ -127,15 +266,18 @@ export async function handleCancel({
 
         const start = new Date(appointment.slot.start_time);
 
-        return `${index + 1}. ${doctor?.title || "Dr"} ${doctor?.first_name} ${
-          doctor?.last_name
-        }
+        return `${index + 1}. ${matchedDoctor?.title || "Dr"} ${
+          matchedDoctor?.first_name
+        } ${matchedDoctor?.last_name}
 
 Date:
 ${start.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}`;
+${start.toLocaleTimeString()}
+
+Reference:
+${appointment.id}`;
       }),
     );
 
@@ -144,7 +286,7 @@ ${start.toLocaleTimeString()}`;
 
       reply: `I found multiple matching appointments.
 
-Please specify which one you want to cancel:
+Please specify which one you want to cancel (copy and paste the reference of the appointment):
 
 ${options.join("\n\n")}`,
     };
@@ -178,11 +320,9 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * FORMAT SUCCESS RESPONSE
+   * GET DOCTOR
    * =====================================
    */
-
-  const profileRepo = dbClient.client.getRepository(Profile);
 
   const matchedDoctor = await profileRepo.findOne({
     where: {
@@ -190,10 +330,17 @@ ${options.join("\n\n")}`,
     },
   });
 
+  /**
+   * SLOT DATE
+   * =====================================
+   */
+
   const start = new Date(appointment.slot.start_time);
 
   /**
+   * =====================================
    * SUCCESS RESPONSE
+   * =====================================
    */
 
   return {
@@ -210,6 +357,9 @@ Date:
 ${start.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}`,
+${start.toLocaleTimeString()}
+
+Reference:
+${appointment.id}`,
   };
 }

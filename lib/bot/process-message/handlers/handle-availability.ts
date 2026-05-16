@@ -1,3 +1,9 @@
+import dbClient from "@/lib/db";
+
+import { Profile } from "@/entities/Profile";
+
+import { DoctorSlot } from "@/entities/DoctorSlot";
+
 import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-specialization";
 
 import { findAvailableSlot } from "../../helpers/find-available-slot";
@@ -9,14 +15,14 @@ import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots
  * HANDLE AVAILABILITY
  * =========================================
  *
- * Purpose:
- * - check doctor slot availability
- * - support:
- *   - doctor name
- *   - specialization
- *   - date
- *   - time
- * - suggest alternatives
+ * Improved:
+ * - avoids undefined access
+ * - uses enriched slot response
+ * - supports:
+ *   - doctor availability
+ *   - specialization availability
+ *   - general availability
+ * - handles missing data safely
  * =========================================
  */
 
@@ -25,153 +31,365 @@ export async function handleAvailability({
 }: {
   context: Record<string, any>;
 }) {
-  /**
-   * =====================================
-   * REQUIRE DOCTOR OR SPECIALIZATION
-   * =====================================
-   */
+  try {
+    /**
+     * =====================================
+     * ENSURE DB CONNECTION
+     * =====================================
+     */
 
-  if (!context.doctor_name && !context.specialization) {
-    return {
-      success: false,
+    await dbClient.init();
 
-      reply:
-        "Which doctor or specialization would you like to check availability for?",
-    };
-  }
+    /**
+     * =====================================
+     * REQUIRE DATE
+     * =====================================
+     */
 
-  /**
-   * =====================================
-   * FIND DOCTOR
-   * =====================================
-   */
+    if (!context.appointment_date) {
+      return {
+        success: false,
 
-  let doctor = context.doctor_name || null;
+        reply: "What date would you like to check availability for?",
+      };
+    }
 
-  /**
-   * SEARCH BY SPECIALIZATION
-   */
+    /**
+     * =====================================
+     * REPOSITORIES
+     * =====================================
+     */
 
-  if (!doctor && context.specialization) {
-    doctor = await findDoctorBySpecialization(context.specialization);
-  }
+    const profileRepo = dbClient.client.getRepository(Profile);
 
-  /**
-   * INVALID DOCTOR
-   */
+    const slotRepo = dbClient.client.getRepository(DoctorSlot);
 
-  if (!doctor) {
-    return {
-      success: false,
+    /**
+     * =====================================
+     * FIND DOCTOR
+     * =====================================
+     */
 
-      reply: "I could not find the requested doctor or specialization.",
-    };
-  }
+    let doctor: any = null;
 
-  /**
-   * =====================================
-   * REQUIRE DATE
-   * =====================================
-   */
+    /**
+     * DIRECT DOCTOR ID
+     */
 
-  if (!context.appointment_date) {
-    return {
-      success: false,
+    if (context.doctor_id) {
+      doctor = await profileRepo.findOne({
+        where: {
+          id: context.doctor_id,
+        },
+      });
+    }
 
-      reply: "What date would you like to check availability for?",
-    };
-  }
+    /**
+     * SPECIALIZATION
+     */
 
-  /**
-   * =====================================
-   * FIND SLOT
-   * =====================================
-   */
+    if (!doctor && context.specialization) {
+      try {
+        doctor = await findDoctorBySpecialization(context.specialization);
+      } catch (err) {
+        console.error("SPECIALIZATION LOOKUP ERROR", err);
+      }
+    }
 
-  const slot = await findAvailableSlot({
-    doctor_id: context.doctor_id,
+    /**
+     * =====================================
+     * SPECIFIC DOCTOR FLOW
+     * =====================================
+     */
 
-    appointment_date: new Date(context.appointment_date),
+    if (doctor?.id) {
+      /**
+       * FIND SLOT
+       */
 
-    time_period: context.time_period,
+      const slot = await findAvailableSlot({
+        doctor_id: doctor.id,
 
-    appointment_time: context.appointment_time,
-  });
+        appointment_date: new Date(context.appointment_date),
 
-  /**
-   * =====================================
-   * SLOT FOUND
-   * =====================================
-   */
+        time_period: context.time_period,
 
-  if (slot) {
-    const start = new Date(slot.start_time);
+        appointment_time: context.appointment_time,
+      });
+
+      /**
+       * SLOT FOUND
+       */
+
+      if (slot) {
+        return {
+          success: true,
+
+          reply: `${slot.doctor?.full_name || "Doctor"} is available.
+
+Available Slot:
+
+Date:
+${slot.formatted?.date || "N/A"}
+
+Start Time:
+${slot.formatted?.start_time || "N/A"}
+
+End Time:
+${slot.formatted?.end_time || "N/A"}`,
+        };
+      }
+
+      /**
+       * =================================
+       * ALTERNATIVES
+       * =================================
+       */
+
+      const alternatives = await suggestAlternativeSlots({
+        doctor_id: doctor.id,
+      });
+
+      /**
+       * NO ALTERNATIVES
+       */
+
+      if (!alternatives || !alternatives.length) {
+        return {
+          success: false,
+
+          reply: `No available slots were found for ${doctor.title || "Dr"} ${
+            doctor.first_name || ""
+          } ${doctor.last_name || ""}.`,
+        };
+      }
+
+      /**
+       * FORMAT ALTERNATIVES
+       */
+
+      const altText = alternatives
+        .map((item) => {
+          const start = new Date(item.start_time);
+
+          const end = new Date(item.end_time);
+
+          return `• ${start.toLocaleDateString()}
+Start:
+${start.toLocaleTimeString()}
+End:
+${end.toLocaleTimeString()}`;
+        })
+        .join("\n\n");
+
+      /**
+       * RESPONSE
+       */
+
+      return {
+        success: false,
+
+        reply: `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
+          doctor.last_name || ""
+        } is unavailable at that time.
+
+Available Alternatives:
+${altText}`,
+      };
+    }
+
+    /**
+     * =====================================
+     * GENERAL AVAILABILITY FLOW
+     * =====================================
+     */
+
+    /**
+     * LOAD AVAILABLE SLOTS
+     */
+
+    const slots = await slotRepo.find({
+      where: {
+        is_booked: false,
+      },
+    });
+
+    /**
+     * NO SLOTS
+     */
+
+    if (!slots.length) {
+      return {
+        success: false,
+
+        reply: "No available doctor slots were found.",
+      };
+    }
+
+    /**
+     * =====================================
+     * BUILD DATE RANGE
+     * =====================================
+     */
+
+    const startOfDay = new Date(context.appointment_date);
+
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(context.appointment_date);
+
+    endOfDay.setHours(23, 59, 59, 999);
+
+    /**
+     * FILTER DATE
+     */
+
+    let filteredSlots = slots.filter((slot) => {
+      const start = new Date(slot.start_time);
+
+      return start >= startOfDay && start <= endOfDay;
+    });
+
+    /**
+     * =====================================
+     * FILTER TIME PERIOD
+     * =====================================
+     */
+
+    if (context.time_period) {
+      filteredSlots = filteredSlots.filter((slot) => {
+        const hour = new Date(slot.start_time).getHours();
+
+        /**
+         * MORNING
+         */
+
+        if (context.time_period === "morning" && hour >= 6 && hour < 12) {
+          return true;
+        }
+
+        /**
+         * AFTERNOON
+         */
+
+        if (context.time_period === "afternoon" && hour >= 12 && hour < 17) {
+          return true;
+        }
+
+        /**
+         * EVENING
+         */
+
+        if (context.time_period === "evening" && hour >= 17 && hour < 22) {
+          return true;
+        }
+
+        /**
+         * NIGHT
+         */
+
+        if (context.time_period === "night" && (hour >= 22 || hour < 6)) {
+          return true;
+        }
+
+        return false;
+      });
+    }
+
+    /**
+     * NO MATCHES
+     */
+
+    if (!filteredSlots.length) {
+      return {
+        success: false,
+
+        reply: "No doctors are currently available for that date and time.",
+      };
+    }
+
+    /**
+     * =====================================
+     * UNIQUE DOCTOR IDS
+     * =====================================
+     */
+
+    const uniqueDoctorIds = [
+      ...new Set(filteredSlots.map((slot) => slot.doctor_id)),
+    ];
+
+    /**
+     * LOAD DOCTORS
+     */
+
+    const doctors = await Promise.all(
+      uniqueDoctorIds.map(async (doctor_id) => {
+        return await profileRepo.findOne({
+          where: {
+            id: doctor_id,
+          },
+        });
+      }),
+    );
+
+    /**
+     * REMOVE NULLS
+     */
+
+    const validDoctors = doctors.filter(Boolean) as Profile[];
+
+    /**
+     * STILL EMPTY
+     */
+
+    if (!validDoctors.length) {
+      return {
+        success: false,
+
+        reply: "No doctors are currently available.",
+      };
+    }
+
+    /**
+     * =====================================
+     * FORMAT RESPONSE
+     * =====================================
+     */
+
+    const doctorText = validDoctors
+      .map((doctor) => {
+        return `• ${doctor.title || "Dr"} ${doctor.first_name || ""} ${
+          doctor.last_name || ""
+        }`;
+      })
+      .join("\n");
+
+    /**
+     * =====================================
+     * SUCCESS
+     * =====================================
+     */
 
     return {
       success: true,
 
-      reply: `${doctor.title || "Dr"} ${doctor.first_name} ${
-        doctor.last_name
-      } is available.
+      reply: `Available Doctors:
 
-Available slot:
-
-Date:
-${start.toLocaleDateString()}
-
-Time:
-${start.toLocaleTimeString()}`,
+${doctorText}`,
     };
-  }
+  } catch (err) {
+    /**
+     * =====================================
+     * ERROR HANDLING
+     * =====================================
+     */
 
-  /**
-   * =====================================
-   * NO SLOT FOUND
-   * =====================================
-   */
+    console.error("HANDLE AVAILABILITY ERROR", err);
 
-  const alternatives = await suggestAlternativeSlots({
-    doctor_id: context.doctor_id,
-  });
-
-  /**
-   * NO ALTERNATIVES
-   */
-
-  if (!alternatives.length) {
     return {
       success: false,
 
-      reply: "No available slots were found for this doctor.",
+      reply: "Something went wrong while checking doctor availability.",
     };
   }
-
-  /**
-   * =====================================
-   * FORMAT ALTERNATIVES
-   * =====================================
-   */
-
-  const altText = alternatives
-    .map((item) => {
-      const start = new Date(item.start_time);
-
-      return `• ${start.toLocaleDateString()} ${start.toLocaleTimeString()}`;
-    })
-    .join("\n");
-
-  /**
-   * RESPONSE
-   */
-
-  return {
-    success: false,
-
-    reply: `${doctor.title || "Dr"} ${doctor.first_name} ${
-      doctor.last_name
-    } is unavailable at that time.
-
-Available alternatives:
-${altText}`,
-  };
 }

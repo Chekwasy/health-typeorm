@@ -44,13 +44,13 @@ export async function processMessage({
 
   message,
 
-  channel = "WEB",
+  channel,
 }: {
   user_id: string;
 
   message: string;
 
-  channel?: string;
+  channel?: "WEB" | "MESSAGE_BIRD" | "META_WHATSAPP";
 }) {
   /**
    * =====================================

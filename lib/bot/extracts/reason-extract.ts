@@ -24,6 +24,37 @@ export function extractReason(message: string) {
 
   /**
    * =====================================
+   * APPOINTMENT CANCELLATION
+   * =====================================
+   */
+
+  if (["cancel", "delete", "remove"].some((word) => text.includes(word))) {
+    return "Appointment cancellation";
+  }
+
+  /**
+   * =====================================
+   * APPOINTMENT VIEWING
+   * =====================================
+   */
+
+  if (
+    [
+      "view",
+      "show",
+      "see",
+      "upcoming",
+      "what appointment",
+      "what booking",
+      "what appointments",
+      "what bookings",
+    ].some((word) => text.includes(word))
+  ) {
+    return "Appointment viewing";
+  }
+
+  /**
+   * =====================================
    * SKIN / DERMATOLOGY
    * =====================================
    */
