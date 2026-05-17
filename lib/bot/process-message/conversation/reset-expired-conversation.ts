@@ -50,6 +50,9 @@ export async function resetExpiredConversation(conversation: BotConversation) {
    */
 
   if (!conversation.expires_at) {
+    conversation.expires_at = new Date();
+
+    await conversationRepo.save(conversation);
     return {
       expired: false,
 
