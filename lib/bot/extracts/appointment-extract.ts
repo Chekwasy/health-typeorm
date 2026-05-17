@@ -68,19 +68,19 @@ export function extractAppointmentReference(rawMessage: string) {
    * =====================================
    */
 
-  const simpleMatch = message.match(/\b[a-z0-9]{6,}\b/i);
+  // const simpleMatch = message.match(/\b[a-z0-9]{6,}\b/i);
 
-  /**
-   * SIMPLE MATCH FOUND
-   */
+  // /**
+  //  * SIMPLE MATCH FOUND
+  //  */
 
-  if (simpleMatch && simpleMatch[0]) {
-    console.log("SIMPLE REFERENCE FOUND", {
-      reference: simpleMatch[0],
-    });
+  // if (simpleMatch && simpleMatch[0]) {
+  //   console.log("SIMPLE REFERENCE FOUND", {
+  //     reference: simpleMatch[0],
+  //   });
 
-    return simpleMatch[0];
-  }
+  //   return simpleMatch[0];
+  // }
 
   /**
    * NO MATCH

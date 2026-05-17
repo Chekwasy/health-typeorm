@@ -145,7 +145,7 @@ export async function handleCancel({
       success: false,
 
       reply:
-        "Which appointment would you like to cancel? You can mention the doctor name, date, or time.",
+        "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
     };
   }
 

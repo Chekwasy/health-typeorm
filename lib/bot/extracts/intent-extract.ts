@@ -24,17 +24,11 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    (message.includes("book") ||
-      message.includes("booking") ||
+    ((message.includes("book") ||
       message.includes("schedule") ||
-      message.includes("consult") ||
       message.includes("see")) &&
-    (message.includes("doctor") ||
-      message.includes("dr") ||
-      message.includes("me") ||
-      message.includes("want") ||
-      message.includes("need") ||
-      message.includes("slot"))
+      (message.includes("doctor") || message.includes("dr"))) ||
+    message.includes("book")
   ) {
     return "BOOK";
   }
@@ -44,10 +38,10 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    message.includes("cancel") &&
-    (message.includes("apponitment") ||
-      message.includes("appointment") ||
+    (message.includes("cancel") || message.includes("delete")) &&
+    (message.includes("appointment") ||
       message.includes("booking") ||
+      message.includes("schedule") ||
       message.includes("appointments") ||
       message.includes("bookings"))
   ) {
@@ -59,13 +53,15 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    message.includes("my appointments") ||
-    message.includes("show my appointment") ||
-    message.includes("my bookings") ||
-    message.includes("upcoming") ||
-    message.includes("my upcoming") ||
-    message.includes("show appointments") ||
-    message.includes("show bookings")
+    (message.includes("my") ||
+      message.includes("upcoming ") ||
+      message.includes("show") ||
+      message.includes("view") ||
+      message.includes("see")) &&
+    (message.includes("booking") ||
+      message.includes("bookings") ||
+      message.includes("appointments") ||
+      message.includes("appointment"))
   ) {
     return "VIEW";
   }
@@ -75,13 +71,15 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    message.includes("available") ||
+    ((message.includes("doctor") ||
+      message.includes("doctors") ||
+      message.includes("dr")) &&
+      (message.includes("available") ||
+        message.includes("free") ||
+        message.includes("open"))) ||
     message.includes("availability") ||
-    message.includes("free slot") ||
-    message.includes("current appointment") ||
-    message.includes("recent appointment") ||
-    message.includes("free time") ||
-    message.includes("slots today")
+    message.includes("available") ||
+    message.includes("free")
   ) {
     return "AVAILABILITY";
   }
@@ -91,18 +89,16 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    [
-      "hi",
-      "hello",
-      "hey",
-      "good morning",
-      "good afternoon",
-      "good evening",
-      "what's up",
-      "how are you",
-      "greetings",
-      "what up",
-    ].some((word) => message.includes(word))
+    message.includes("hi") ||
+    message.includes("hello") ||
+    message.includes("hey") ||
+    message.includes("good morning") ||
+    message.includes("good afternoon") ||
+    message.includes("good evening") ||
+    message.includes("what's up") ||
+    message.includes("how are you") ||
+    message.includes("greetings") ||
+    message.includes("what up")
   ) {
     return "GREETING";
   }

@@ -30,6 +30,8 @@ function normalizeDateTypos(message: string) {
 
     nxt: "next",
 
+    "this week": "next sunday",
+
     mon: "monday",
 
     tue: "tuesday",

@@ -16,7 +16,6 @@
  * - book richard tomorrow
  * - book dr richard
  * - appointment with rajesh
- * - need dr chekwas
  *
  * This is much more reliable
  * than regex-only extraction.
@@ -114,7 +113,7 @@ async function findDoctorMention(
       return {
         doctor_id: doctor.id,
 
-        doctor_name: `${title} ${doctor.first_name} ${doctor.last_name}`,
+        doctor_name: `${doctor.first_name} ${doctor.last_name}`,
 
         title,
 
@@ -157,29 +156,11 @@ export async function extractDoctorName(message: string) {
   }
 
   /**
-   * CLEAN TITLE
-   */
-
-  const title = doctor_details.title?.trim() || "Dr";
-
-  /**
-   * CLEAN NAME
-   */
-
-  let doctorName = doctor_details.doctor_name.trim();
-
-  /**
-   * REMOVE EXISTING TITLE
-   *
-   * Prevent:
-   * Dr Dr Richard
-   */
-
-  doctorName = doctorName.replace(/^(dr|doctor)\.?\s+/i, "");
-
-  /**
    * RETURN FORMATTED
    */
 
-  return { doctor_name: `${doctorName}`, doctor_id: doctor_details.doctor_id };
+  return {
+    doctor_name: `${doctor_details.doctor_name}`,
+    doctor_id: doctor_details.doctor_id,
+  };
 }

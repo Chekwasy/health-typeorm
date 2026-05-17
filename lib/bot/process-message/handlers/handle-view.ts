@@ -2,21 +2,40 @@ import dbClient from "@/lib/db";
 
 import { Profile } from "@/entities/Profile";
 
-import { getUpcomingAppointments } from "../../helpers/upcoming-appointment";
+import { Appointment } from "@/entities/Appointment";
 
 /**
  * =========================================
  * HANDLE VIEW APPOINTMENTS
  * =========================================
  *
- * Purpose:
- * - fetch upcoming appointments
- * - format conversational response
- * - show doctor/date/time/reference
+ * Features:
+ * - uses conversational context
+ * - supports:
+ *   - specific date
+ *   - doctor
+ * - smart fallback ranges
+ * - shows:
+ *   - doctor
+ *   - reason
+ *   - start/end time
+ *   - status
+ *   - reference
+ * - only shows:
+ *   - CONFIRMED
+ *   - PENDING
  * =========================================
  */
 
-export async function handleView({ user_id }: { user_id: string }) {
+export async function handleView({
+  user_id,
+
+  context,
+}: {
+  user_id: string;
+
+  context: Record<string, any>;
+}) {
   /**
    * =====================================
    * ENSURE DB CONNECTION
@@ -27,15 +46,213 @@ export async function handleView({ user_id }: { user_id: string }) {
 
   /**
    * =====================================
+   * REPOSITORIES
+   * =====================================
+   */
+
+  const appointmentRepo = dbClient.client.getRepository(Appointment);
+
+  const profileRepo = dbClient.client.getRepository(Profile);
+
+  /**
+   * =====================================
+   * CURRENT DATE
+   * =====================================
+   */
+
+  const now = new Date();
+
+  /**
+   * =====================================
+   * BUILD DATE RANGE
+   * =====================================
+   *
+   * Priority:
+   * 1. Context date
+   * 2. End of week
+   * 3. All future appointments
+   * =====================================
+   */
+
+  let endDate: Date | null = null;
+
+  /**
+   * =====================================
+   * CONTEXT DATE
+   * =====================================
+   */
+
+  if (context.appointment_date) {
+    endDate = new Date(context.appointment_date);
+
+    endDate.setHours(23, 59, 59, 999);
+  } else {
+
+  /**
+   * =====================================
+   * FALLBACK END OF WEEK
+   * =====================================
+   */
+    endDate = new Date();
+
+    const currentDay = endDate.getDay();
+
+    const remainingDays = 7 - currentDay;
+
+    endDate.setDate(endDate.getDate() + remainingDays);
+
+    endDate.setHours(23, 59, 59, 999);
+  }
+
+  /**
+   * =====================================
    * FETCH APPOINTMENTS
    * =====================================
    */
 
-  const appointments = await getUpcomingAppointments(user_id);
+  let appointments = await appointmentRepo.find({
+    where: {
+      patient_id: user_id,
+    },
+
+    relations: ["slot"],
+
+    order: {
+      created_at: "ASC",
+    },
+  });
 
   /**
    * =====================================
-   * NO APPOINTMENTS
+   * FILTER APPOINTMENTS
+   * =====================================
+   */
+
+  appointments = appointments.filter((appointment) => {
+    /**
+     * INVALID SLOT
+     */
+
+    if (!appointment.slot) {
+      return false;
+    }
+
+    /**
+     * SLOT START
+     */
+
+    const start = new Date(appointment.slot.start_time);
+
+    /**
+     * FUTURE ONLY
+     */
+
+    if (start < now) {
+      return false;
+    }
+
+    /**
+     * =================================
+     * ALLOWED STATUSES
+     * =================================
+     */
+
+    const allowedStatuses = ["CONFIRMED", "PENDING"];
+
+    /**
+     * NORMALIZE STATUS
+     */
+
+    const normalizedStatus = String(appointment.status).toUpperCase();
+
+    /**
+     * INVALID STATUS
+     */
+
+    if (!allowedStatuses.includes(normalizedStatus)) {
+      return false;
+    }
+
+    /**
+     * RANGE FILTER
+     */
+
+    return start >= now && start <= endDate!;
+  });
+
+  /**
+   * =====================================
+   * FILTER BY DOCTOR
+   * =====================================
+   */
+
+  if (context.doctor_id) {
+    appointments = appointments.filter(
+      (appointment) => appointment.doctor_id === context.doctor_id,
+    );
+  }
+
+  /**
+   * =====================================
+   * NO APPOINTMENTS IN RANGE
+   * =====================================
+   *
+   * FALLBACK:
+   * Fetch all future appointments
+   * =====================================
+   */
+
+  if (!appointments.length) {
+    appointments = await appointmentRepo.find({
+      where: {
+        patient_id: user_id,
+      },
+
+      relations: ["slot"],
+
+      order: {
+        created_at: "ASC",
+      },
+    });
+
+    /**
+     * FILTER AGAIN
+     */
+
+    appointments = appointments.filter((appointment) => {
+      /**
+       * INVALID SLOT
+       */
+
+      if (!appointment.slot) {
+        return false;
+      }
+
+      /**
+       * SLOT START
+       */
+
+      const start = new Date(appointment.slot.start_time);
+
+      /**
+       * STATUS
+       */
+
+      const normalizedStatus = String(appointment.status).toUpperCase();
+
+      /**
+       * ALLOWED
+       */
+
+      const allowedStatuses = ["CONFIRMED", "PENDING"];
+
+      return start >= now && allowedStatuses.includes(normalizedStatus);
+    });
+  }
+
+  /**
+   * =====================================
+   * STILL EMPTY
    * =====================================
    */
 
@@ -49,15 +266,7 @@ export async function handleView({ user_id }: { user_id: string }) {
 
   /**
    * =====================================
-   * PROFILE REPOSITORY
-   * =====================================
-   */
-
-  const profileRepo = dbClient.client.getRepository(Profile);
-
-  /**
-   * =====================================
-   * BUILD RESPONSE LINES
+   * BUILD RESPONSE
    * =====================================
    */
 
@@ -74,24 +283,38 @@ export async function handleView({ user_id }: { user_id: string }) {
       });
 
       /**
-       * SLOT DATE
+       * SLOT TIMES
        */
 
       const start = new Date(appointment.slot.start_time);
+
+      const end = new Date(appointment.slot.end_time);
+
+      /**
+       * DOCTOR NAME
+       */
+
+      const doctorName = `${doctor?.title || "Dr"} ${
+        doctor?.first_name || ""
+      } ${doctor?.last_name || ""}`.trim();
 
       /**
        * FORMAT RESPONSE
        */
 
-      return `${index + 1}. ${doctor?.title || "Dr"} ${doctor?.first_name} ${
-        doctor?.last_name
-      }
+      return `${index + 1}. ${doctorName}
+
+Reason:
+${appointment.reason || "General consultation"}
 
 Date:
 ${start.toLocaleDateString()}
 
-Time:
+Start Time:
 ${start.toLocaleTimeString()}
+
+End Time:
+${end.toLocaleTimeString()}
 
 Status:
 ${appointment.status}
@@ -110,7 +333,7 @@ ${appointment.id}`;
   return {
     success: true,
 
-    reply: `Your upcoming appointments:
+    reply: `Your appointments:
 
 ${lines.join("\n\n")}`,
   };

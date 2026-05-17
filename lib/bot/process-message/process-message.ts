@@ -21,6 +21,7 @@ import { handleAvailability } from "./handlers/handle-availability";
 import { handleBook } from "./handlers/handle-books";
 
 import { handleFallback } from "./handlers/handle-fallback";
+import { BotConversation } from "@/entities/BotConversation";
 
 /**
  * =========================================
@@ -58,7 +59,7 @@ export async function processMessage({
    * =====================================
    */
 
-  const conversation = await loadConversation({
+  let conversation = await loadConversation({
     user_id,
 
     channel,
@@ -70,7 +71,7 @@ export async function processMessage({
    * =====================================
    */
 
-  await resetExpiredConversation(conversation);
+  conversation = (await resetExpiredConversation(conversation)).conversation;
 
   /**
    * =====================================
@@ -106,7 +107,7 @@ export async function processMessage({
    * =====================================
    */
 
-  const context = await mergeContext({
+  const { currentConversation, context } = await mergeContext({
     conversation,
 
     extracted,
@@ -118,7 +119,7 @@ export async function processMessage({
    * =====================================
    */
 
-  await extendExpiry(conversation);
+  await extendExpiry(currentConversation);
 
   /**
    * =====================================
@@ -126,11 +127,11 @@ export async function processMessage({
    * =====================================
    */
 
-  const activeIntent = getActiveIntent({
-    extractedIntent: extracted.intent,
+  const activeIntent = context.intent; //getActiveIntent({
+  //   extractedIntent: context.intent,
 
-    context,
-  });
+  //   context,
+  // });
 
   /**
    * =====================================
@@ -159,6 +160,7 @@ export async function processMessage({
   if (activeIntent === "VIEW") {
     return await handleView({
       user_id,
+      context,
     });
   }
 
@@ -198,7 +200,7 @@ export async function processMessage({
     return await handleBook({
       user_id,
 
-      conversation,
+      conversation: currentConversation,
 
       context,
     });
