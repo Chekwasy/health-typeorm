@@ -22,6 +22,7 @@ import { handleBook } from "./handlers/handle-books";
 
 import { handleFallback } from "./handlers/handle-fallback";
 import { BotConversation } from "@/entities/BotConversation";
+import { BotChannel } from "../../../entities/BotConversation";
 
 /**
  * =========================================
@@ -51,7 +52,7 @@ export async function processMessage({
 
   message: string;
 
-  channel?: "WEB" | "MESSAGE_BIRD" | "META_WHATSAPP";
+  channel?: "WEB" | "MESSAGE_BIRD" | "META_WHATSAPP" | "VOICE";
 }) {
   /**
    * =====================================
@@ -113,6 +114,8 @@ export async function processMessage({
     extracted,
   });
 
+  const botChannel = currentConversation.channel;
+
   /**
    * =====================================
    * EXTEND SESSION EXPIRY
@@ -148,7 +151,7 @@ export async function processMessage({
    */
 
   if (activeIntent === "GREETING") {
-    return await handleGreeting();
+    return await handleGreeting(botChannel);
   }
 
   /**
@@ -161,6 +164,7 @@ export async function processMessage({
     return await handleView({
       user_id,
       context,
+      channel: botChannel,
     });
   }
 
@@ -175,6 +179,8 @@ export async function processMessage({
       user_id,
 
       context,
+
+      channel: botChannel,
     });
   }
 

@@ -10,17 +10,20 @@
  * =========================================
  */
 
-export async function handleGreeting() {
+import { BotConversation } from "@/entities/BotConversation";
+
+export async function handleGreeting(channel: string) {
   /**
    * =====================================
    * RESPONSE
    * =====================================
    */
 
-  return {
-    success: true,
+  if (channel !== "VOICE") {
+    return {
+      success: true,
 
-    reply: `Hello 👋
+      reply: `Hello 👋
 
 How can I help you today?
 
@@ -35,5 +38,11 @@ More Examples:
 - Need a skin doctor tomorrow
 - Show my appointments
 - Cancel my appointment`,
-  };
+    };
+  } else {
+    return {
+      success: true,
+      reply: "Hello! How can I help you today?",
+    };
+  }
 }

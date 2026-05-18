@@ -12,7 +12,7 @@ import {
  * =========================================
  */
 
-export type BotChannel = "WHATSAPP" | "WEB" | "MOBILE";
+export type BotChannel = "META_WHATSAPP" | "WEB" | "MESSAGE_BIRD" | "VOICE";
 
 /**
  * =========================================
@@ -67,9 +67,9 @@ export class BotConversation {
   @Column({
     type: "enum",
 
-    enum: ["WHATSAPP", "WEB", "MOBILE"],
+    enum: ["META_WHATSAPP", "WEB", "MESSAGE_BIRD", "VOICE"],
 
-    default: "WHATSAPP",
+    default: "MESSAGE_BIRD",
   })
   channel!: BotChannel;
 

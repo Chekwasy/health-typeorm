@@ -26,10 +26,14 @@ export async function handleCancel({
   user_id,
 
   context,
+
+  channel,
 }: {
   user_id: string;
 
   context: Record<string, any>;
+
+  channel: string;
 }) {
   /**
    * =====================================
@@ -94,11 +98,18 @@ export async function handleCancel({
        */
 
       if (result.success) {
-        return {
-          success: true,
+        if (channel !== "VOICE")
+          return {
+            success: true,
 
-          reply: "Your appointment has been cancelled successfully.",
-        };
+            reply: "Your appointment has been cancelled successfully.",
+          };
+        else {
+          return {
+            success: true,
+            reply: "Your appointment has been cancelled successfully.",
+          };
+        }
       }
 
       /**
@@ -141,12 +152,20 @@ export async function handleCancel({
     !context.specialization &&
     !context.appointment_date
   ) {
-    return {
-      success: false,
+    if (channel !== "VOICE")
+      return {
+        success: false,
 
-      reply:
-        "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
-    };
+        reply:
+          "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
+      };
+    else {
+      return {
+        success: false,
+        reply:
+          "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
+      };
+    }
   }
 
   /**
@@ -217,12 +236,19 @@ export async function handleCancel({
      */
 
     if (!context.appointment_date) {
-      return {
-        success: false,
-
-        reply:
-          "I could not find a matching appointment. What date was the appointment scheduled for?",
-      };
+      if (channel !== "VOICE") {
+        return {
+          success: false,
+          reply:
+            "I could not find a matching appointment. What date was the appointment scheduled for?",
+        };
+      } else {
+        return {
+          success: false,
+          reply:
+            "I could not find a matching appointment. What date was the appointment scheduled for?",
+        };
+      }
     }
 
     /**
@@ -230,23 +256,37 @@ export async function handleCancel({
      */
 
     if (!context.appointment_time && !context.time_period) {
-      return {
-        success: false,
-
-        reply:
-          "I could not find a matching appointment. What time was the appointment?",
-      };
+      if (channel !== "VOICE") {
+        return {
+          success: false,
+          reply:
+            "I could not find a matching appointment. What time was the appointment?",
+        };
+      } else {
+        return {
+          success: false,
+          reply:
+            "I could not find a matching appointment. What time was the appointment?",
+        };
+      }
     }
 
     /**
      * GENERAL FAILURE
      */
 
-    return {
-      success: false,
+    if (channel !== "VOICE") {
+      return {
+        success: false,
 
-      reply: "I could not find any matching active appointment to cancel.",
-    };
+        reply: "I could not find any matching active appointment to cancel.",
+      };
+    } else {
+      return {
+        success: false,
+        reply: "I could not find any matching active appointment to cancel.",
+      };
+    }
   }
 
   /**

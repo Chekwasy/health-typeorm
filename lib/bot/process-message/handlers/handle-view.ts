@@ -3,6 +3,7 @@ import dbClient from "@/lib/db";
 import { Profile } from "@/entities/Profile";
 
 import { Appointment } from "@/entities/Appointment";
+import { BotConversation } from "@/entities/BotConversation";
 
 /**
  * =========================================
@@ -31,10 +32,14 @@ export async function handleView({
   user_id,
 
   context,
+
+  channel,
 }: {
   user_id: string;
 
   context: Record<string, any>;
+
+  channel: string;
 }) {
   /**
    * =====================================
@@ -87,12 +92,11 @@ export async function handleView({
 
     endDate.setHours(23, 59, 59, 999);
   } else {
-
-  /**
-   * =====================================
-   * FALLBACK END OF WEEK
-   * =====================================
-   */
+    /**
+     * =====================================
+     * FALLBACK END OF WEEK
+     * =====================================
+     */
     endDate = new Date();
 
     const currentDay = endDate.getDay();
@@ -257,11 +261,17 @@ export async function handleView({
    */
 
   if (!appointments.length) {
-    return {
-      success: true,
-
-      reply: "You currently have no upcoming appointments.",
-    };
+    if (channel !== "VOICE") {
+      return {
+        success: true,
+        reply: "You currently have no upcoming appointments.",
+      };
+    } else {
+      return {
+        success: true,
+        reply: "You currently do not have any upcoming appointments.",
+      };
+    }
   }
 
   /**
@@ -299,7 +309,29 @@ export async function handleView({
       } ${doctor?.last_name || ""}`.trim();
 
       /**
-       * FORMAT RESPONSE
+       * =================================
+       * VOICE RESPONSE
+       * =================================
+       */
+
+      if (channel === "VOICE") {
+        return `Appointment ${index + 1}.
+
+With ${doctorName}.
+
+For ${appointment.reason || "general consultation"}.
+
+On ${start.toLocaleDateString()}.
+
+From ${start.toLocaleTimeString()} to ${end.toLocaleTimeString()}.
+
+Status is ${String(appointment.status).toLowerCase().replaceAll("_", " ")}.`;
+      }
+
+      /**
+       * =================================
+       * WEB/TEXT RESPONSE
+       * =================================
        */
 
       return `${index + 1}. ${doctorName}
@@ -327,6 +359,24 @@ ${appointment.id}`;
   /**
    * =====================================
    * FINAL RESPONSE
+   * =====================================
+   */
+
+  if (channel === "VOICE") {
+    return {
+      success: true,
+
+      reply: `You have ${appointments.length} upcoming appointment${
+        appointments.length > 1 ? "s" : ""
+      }.
+
+${lines.join("\n\n")}`,
+    };
+  }
+
+  /**
+   * =====================================
+   * DEFAULT WEB RESPONSE
    * =====================================
    */
 
