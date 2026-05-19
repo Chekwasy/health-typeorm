@@ -2,30 +2,89 @@
  * =========================================
  * EXTRACT APPOINTMENT REFERENCE
  * =========================================
+ *
+ * Supports:
+ * - plain uuid
+ * - uuid inside ""
+ * - uuid inside ''
+ * - uuid inside brackets
+ * - uppercase/lowercase
+ *
+ * Examples:
+ *
+ * 4257ee5b-6e5b-40da-9fb0-a2db5508cd55
+ *
+ * "4257ee5b-6e5b-40da-9fb0-a2db5508cd55"
+ *
+ * '4257ee5b-6e5b-40da-9fb0-a2db5508cd55'
+ *
+ * ref: 4257ee5b-6e5b-40da-9fb0-a2db5508cd55
+ * =========================================
  */
 
-export function extractAppointmentReference(message: string) {
+export function extractAppointmentReference(rawMessage: string) {
   /**
-   * UUID MATCH
+   * NORMALIZE MESSAGE
    */
 
-  const uuidMatch = message.match(
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
-  );
+  const message = rawMessage.trim();
 
-  if (uuidMatch) {
-    return uuidMatch[0];
+  /**
+   * =====================================
+   * UUID REGEX
+   * =====================================
+   */
+
+  const uuidRegex =
+    /["'\s(]*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})["'\s)]*/i;
+
+  /**
+   * MATCH UUID
+   */
+
+  const uuidMatch = message.match(uuidRegex);
+
+  /**
+   * UUID FOUND
+   */
+
+  if (uuidMatch && uuidMatch[1]) {
+    console.log("UUID REFERENCE FOUND", {
+      reference: uuidMatch[1],
+    });
+
+    return uuidMatch[1];
   }
 
   /**
-   * FALLBACK SIMPLE REFERENCE
+   * =====================================
+   * FALLBACK REFERENCE
+   * =====================================
+   *
+   * Supports:
+   * REF12345
+   * booking123
+   * abc123xyz
+   * =====================================
    */
 
-  const simpleMatch = message.match(/\b[a-z0-9]{6,}\b/i);
+  // const simpleMatch = message.match(/\b[a-z0-9]{6,}\b/i);
 
-  if (simpleMatch) {
-    return simpleMatch[0];
-  }
+  // /**
+  //  * SIMPLE MATCH FOUND
+  //  */
+
+  // if (simpleMatch && simpleMatch[0]) {
+  //   console.log("SIMPLE REFERENCE FOUND", {
+  //     reference: simpleMatch[0],
+  //   });
+
+  //   return simpleMatch[0];
+  // }
+
+  /**
+   * NO MATCH
+   */
 
   return null;
 }

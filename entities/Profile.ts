@@ -13,10 +13,10 @@ export class Profile {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
 
-  @Column({ unique: true })
+  @Column({ unique: true, nullable: true })
   email!: string;
 
-  @Column({ select: false })
+  @Column({ select: false, nullable: true })
   password!: string;
 
   @Column({ nullable: true })
@@ -25,10 +25,10 @@ export class Profile {
   @Column({ nullable: true })
   title!: string;
 
-  @Column()
+  @Column({ nullable: true })
   first_name!: string;
 
-  @Column()
+  @Column({ nullable: true })
   last_name!: string;
 
   @Column({

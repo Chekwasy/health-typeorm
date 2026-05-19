@@ -2,22 +2,7 @@ import * as chrono from "chrono-node";
 
 /**
  * =========================================
- * DATE NORMALIZATION + EXTRACTION
- * =========================================
- *
- * Goal:
- * - typo resistant
- * - conversational friendly
- * - stable chrono parsing
- * - date-only extraction
- *
- * Time extraction is handled separately.
- * =========================================
- */
-
-/**
- * =========================================
- * NORMALIZE TYPO WORDS
+ * TYPO NORMALIZATION
  * =========================================
  */
 
@@ -39,13 +24,13 @@ function normalizeDateTypos(message: string) {
 
     toomoro: "tomorrow",
 
-    toomorow: "tomorrow",
-
     "2moro": "tomorrow",
 
     todai: "today",
 
     nxt: "next",
+
+    "this week": "next sunday",
 
     mon: "monday",
 
@@ -65,7 +50,7 @@ function normalizeDateTypos(message: string) {
   };
 
   /**
-   * APPLY REPLACEMENTS
+   * APPLY FIXES
    */
 
   for (const [wrong, correct] of Object.entries(replacements)) {
@@ -90,22 +75,19 @@ function normalizeDatePhrases(message: string) {
    * NEXT TOMORROW
    */
 
-  text = text.replace(/next tomorrow/gi, "day after tomorrow");
-
-  /**
-   * NEXT X DAYS
-   *
-   * next 3 days
-   * -> in 3 days
-   */
-
-  text = text.replace(/next (\d+) days?/gi, "in $1 days");
+  text = text.replace(/next tomorrow/gi, "in 2 day");
 
   /**
    * DAY AFTER TOMORROW
    */
 
-  text = text.replace(/a day after tomorrow/gi, "day after tomorrow");
+  text = text.replace(/day after tomorrow|a day after tomorrow/gi, "in 2 days");
+
+  /**
+   * NEXT X DAYS
+   */
+
+  text = text.replace(/next (\d+) days?/gi, "in $1 days");
 
   /**
    * REMOVE EXTRA WORDS
@@ -118,11 +100,7 @@ function normalizeDatePhrases(message: string) {
 
 /**
  * =========================================
- * EXTRACT DATE PHRASE ONLY
- * =========================================
- *
- * Extract only likely date text
- * instead of entire sentence.
+ * EXTRACT DATE PHRASE
  * =========================================
  */
 
@@ -133,59 +111,70 @@ function extractDatePhrase(message: string) {
 
   const patterns = [
     /**
-     * today
-     * tomorrow
+     * TODAY
+     * TOMORROW
+     * IN X DAYS
      */
 
-    /\b(today|tomorrow|day after tomorrow)\b/i,
+    /\b(today|tomorrow|in \d+ day|in \d+ days)\b/i,
 
     /**
-     * in 3 days
-     */
-
-    /\bin \d+ days?\b/i,
-
-    /**
-     * next week monday
+     * NEXT WEEK MONDAY
      */
 
     /\bnext week (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
 
     /**
-     * next monday
+     * NEXT MONDAY
      */
 
     /\bnext (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
 
     /**
-     * monday
+     * WEEKDAY
      */
 
     /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
 
     /**
+     * 16 may 2026
      * 16th may 2026
+     * 16 th may 2026
      */
 
-    /\b\d{1,2}(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\b/i,
+    /\b\d{1,2}\s?(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\b/i,
 
     /**
+     * 16 may
      * 16th may
+     * 16 th may
      */
 
-    /\b\d{1,2}(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i,
+    /\b\d{1,2}\s?(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i,
 
     /**
      * may 16
+     * may 16th
+     * may 16 th
      */
 
-    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(st|nd|rd|th)?\b/i,
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\s?(st|nd|rd|th)?\b/i,
 
     /**
-     * 16th
+     * SIMPLE DAY:
+     * 5
+     * 5th
+     * 5 th
+     * 2nd
+     * 2 nd
+     *
+     * Prevent:
+     * 4pm
+     * 7am
+     * 14:00
      */
 
-    /\b\d{1,2}(st|nd|rd|th)\b/i,
+    /\b([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?\b(?!\s?(am|pm|\:))/i,
   ];
 
   /**
@@ -205,53 +194,111 @@ function extractDatePhrase(message: string) {
 
 /**
  * =========================================
+ * NORMALIZE SIMPLE DAY
+ * =========================================
+ *
+ * Converts:
+ * 5
+ * 5th
+ * 5 th
+ * ->
+ * 5 May 2026
+ * =========================================
+ */
+
+function normalizeSimpleDay(phrase: string) {
+  /**
+   * SIMPLE DAY MATCH
+   */
+
+  const simpleDayMatch = phrase.match(
+    /^([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?$/i,
+  );
+
+  /**
+   * NOT SIMPLE
+   */
+
+  if (!simpleDayMatch) {
+    return phrase;
+  }
+
+  /**
+   * CURRENT DATE
+   */
+
+  const now = new Date();
+
+  /**
+   * DAY
+   */
+
+  const day = Number(simpleDayMatch[1]);
+
+  /**
+   * MONTH
+   */
+
+  const month = now.toLocaleString("default", {
+    month: "long",
+  });
+
+  /**
+   * YEAR
+   */
+
+  const year = now.getFullYear();
+
+  /**
+   * BUILD FULL DATE
+   */
+
+  return `${day} ${month} ${year}`;
+}
+
+/**
+ * =========================================
  * MAIN DATE EXTRACTION
  * =========================================
  */
 
 export function extractDate(rawMessage: string) {
   /**
-   * =====================================
-   * STEP 1:
    * TYPO NORMALIZATION
-   * =====================================
    */
 
   let normalized = normalizeDateTypos(rawMessage);
 
   /**
-   * =====================================
-   * STEP 2:
    * PHRASE NORMALIZATION
-   * =====================================
    */
 
   normalized = normalizeDatePhrases(normalized);
 
   /**
-   * =====================================
-   * STEP 3:
    * EXTRACT DATE PHRASE
-   * =====================================
    */
 
-  const datePhrase = extractDatePhrase(normalized);
+  let datePhrase = extractDatePhrase(normalized);
 
   /**
    * NO DATE FOUND
    */
 
   if (!datePhrase) {
-    console.log("NO DATE PHRASE FOUND");
+    console.log("NO DATE FOUND");
 
     return null;
   }
 
   /**
-   * =====================================
-   * STEP 4:
+   * NORMALIZE SIMPLE DAY
+   */
+
+  datePhrase = normalizeSimpleDay(datePhrase);
+
+  /**
    * CHRONO PARSE
-   * =====================================
    */
 
   const parsed = chrono.parse(datePhrase, new Date());
@@ -273,13 +320,7 @@ export function extractDate(rawMessage: string) {
   const date = parsed[0].start.date();
 
   /**
-   * =====================================
    * REMOVE TIME
-   * =====================================
-   *
-   * Since time is extracted
-   * separately.
-   * =====================================
    */
 
   date.setHours(0, 0, 0, 0);
@@ -297,6 +338,10 @@ export function extractDate(rawMessage: string) {
 
     parsed_date: date,
   });
+
+  /**
+   * RETURN DATE
+   */
 
   return date;
 }

@@ -10,30 +10,39 @@
  * =========================================
  */
 
-export async function handleGreeting() {
+import { BotConversation } from "@/entities/BotConversation";
+
+export async function handleGreeting(channel: string) {
   /**
    * =====================================
    * RESPONSE
    * =====================================
    */
 
-  return {
-    success: true,
+  if (channel !== "VOICE") {
+    return {
+      success: true,
 
-    reply: `Hello 👋
+      reply: `Hello 👋
 
 How can I help you today?
 
 You can:
-- Book appointment
-- View appointments
-- Cancel appointment
-- Check doctor availability
+- Book appointment e.g. "Book Dr Smith tomorrow at 3pm | I need a cardiologist on 20th June"
+- View appointments e.g. "Show my appointments for 18th June | today | tomorrow"
+- Cancel appointment e.g. "Cancel my appointment on 20th June" | "Cancel appointment with Dr Smith tomorrow"
+- Check doctor availability e.g. "What doctors are available tomorrow?" | "What slots do I have tomorrow?"
 
-Examples:
+More Examples:
 - Book Dr Richard tomorrow evening
 - Need a skin doctor tomorrow
 - Show my appointments
 - Cancel my appointment`,
-  };
+    };
+  } else {
+    return {
+      success: true,
+      reply: "Hello! How can I help you today?",
+    };
+  }
 }

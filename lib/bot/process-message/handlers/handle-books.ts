@@ -221,7 +221,7 @@ ${altText}`,
 
     doctor_id: context.doctor_id,
 
-    slot_id: slot.id,
+    slot_id: slot.slot_id,
 
     reason: context.reason || "General consultation",
   });

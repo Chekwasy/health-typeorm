@@ -20,7 +20,7 @@ import { BotConversation } from "@/entities/BotConversation";
 export async function loadConversation({
   user_id,
 
-  channel = "WEB",
+  channel,
 }: {
   user_id: string;
 

@@ -1,12 +1,44 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+
 import dbClient from "@/lib/db";
+
 import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
+
+import { processMessage } from "@/lib/bot/process-message/process-message";
+
+import { sendMetaWhatsAppMessage } from "../send-message";
+
+/**
+ * =========================================
+ * META WHATSAPP WEBHOOK
+ * =========================================
+ *
+ * Purpose:
+ * - receive WhatsApp messages
+ * - validate webhook
+ * - process chatbot requests
+ * - send AI replies
+ * - handle statuses
+ * =========================================
+ */
 
 export async function POST(req: Request) {
   try {
+    /**
+     * =====================================
+     * INIT DB
+     * =====================================
+     */
+
     await dbClient.init();
+
+    /**
+     * =====================================
+     * REQUEST BODY
+     * =====================================
+     */
 
     const body = await req.json();
 
@@ -31,13 +63,15 @@ export async function POST(req: Request) {
 
           message: "Invalid webhook object",
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
     /**
      * =====================================
-     * SAFELY EXTRACT DATA
+     * SAFE EXTRACTION
      * =====================================
      */
 
@@ -53,17 +87,42 @@ export async function POST(req: Request) {
      * =====================================
      */
 
-    const phone_number_id = value?.metadata?.phone_number_id;
+    const phone_number_id = value?.metadata?.phone_number_id || null;
 
     /**
      * =====================================
-     * FIND DOCTOR INTEGRATION
+     * VALIDATE BOT NUMBER
+     * =====================================
+     */
+
+    if (phone_number_id !== process.env.META_PHONE_NUMBER_ID) {
+      console.warn("INVALID META PHONE NUMBER ID", {
+        received: phone_number_id,
+
+        expected: process.env.META_PHONE_NUMBER_ID,
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+
+          message: "Ignored invalid phone number id",
+        },
+        {
+          status: 200,
+        },
+      );
+    }
+
+    /**
+     * =====================================
+     * FIND INTEGRATION OWNER
      * =====================================
      */
 
     let integration = null;
 
-    if (phone_number_id) {
+    try {
       const integrationRepo =
         dbClient.client.getRepository(WhatsAppIntegration);
 
@@ -75,18 +134,17 @@ export async function POST(req: Request) {
         },
       });
 
-      if (integration) {
-        console.log("WEBHOOK OWNER FOUND:", {
-          doctor_id: integration.doctor_id,
+      /**
+       * LOG RESULT
+       */
 
-          provider: integration.provider,
-        });
-      } else {
-        console.warn(
-          "NO META INTEGRATION FOUND FOR PHONE NUMBER ID:",
-          phone_number_id,
-        );
-      }
+      console.log("META INTEGRATION:", {
+        found: !!integration,
+
+        doctor_id: integration?.doctor_id || null,
+      });
+    } catch (err) {
+      console.error("FAILED TO LOAD META INTEGRATION", err);
     }
 
     /**
@@ -97,16 +155,28 @@ export async function POST(req: Request) {
 
     const incomingMessage = value?.messages?.[0];
 
-    if (incomingMessage) {
-      const from = incomingMessage.from;
+    /**
+     * PROCESS MESSAGE
+     */
 
-      const type = incomingMessage.type;
+    if (incomingMessage) {
+      /**
+       * ===================================
+       * BASIC DATA
+       * ===================================
+       */
+
+      const from = incomingMessage.from || null;
+
+      const type = incomingMessage.type || "text";
+
+      const messageId = incomingMessage.id || null;
 
       /**
        * TEXT
        */
 
-      const text = incomingMessage?.text?.body || null;
+      const text = incomingMessage?.text?.body || "";
 
       /**
        * MEDIA
@@ -120,10 +190,16 @@ export async function POST(req: Request) {
 
       const document = incomingMessage?.document || null;
 
-      console.log("NEW WHATSAPP MESSAGE:");
+      /**
+       * ===================================
+       * LOG MESSAGE
+       * ===================================
+       */
 
-      console.log({
+      console.log("NEW META WHATSAPP MESSAGE", {
         doctor_id: integration?.doctor_id || null,
+
+        message_id: messageId,
 
         from,
 
@@ -141,13 +217,127 @@ export async function POST(req: Request) {
       });
 
       /**
-       * FUTURE:
-       * - save message to DB
-       * - doctor notifications
-       * - AI chatbot
-       * - analytics
-       * - live dashboard
+       * ===================================
+       * ONLY SUPPORT TEXT
+       * ===================================
        */
+
+      if (type !== "text") {
+        console.warn("UNSUPPORTED META MESSAGE TYPE", {
+          type,
+        });
+
+        /**
+         * OPTIONAL:
+         * SEND UNSUPPORTED MESSAGE
+         */
+
+        await sendMetaWhatsAppMessage({
+          to: from,
+
+          text: "Sorry, only text messages are currently supported.",
+        });
+
+        return NextResponse.json(
+          {
+            success: true,
+
+            message: "Unsupported message type",
+          },
+          {
+            status: 200,
+          },
+        );
+      }
+
+      /**
+       * ===================================
+       * EMPTY TEXT
+       * ===================================
+       */
+
+      if (!text?.trim()) {
+        return NextResponse.json(
+          {
+            success: true,
+
+            message: "Empty message ignored",
+          },
+          {
+            status: 200,
+          },
+        );
+      }
+
+      /**
+       * ===================================
+       * BUILD BOT USER ID
+       * ===================================
+       */
+
+      const user_id = `meta:${from}`;
+
+      /**
+       * ===================================
+       * PROCESS BOT MESSAGE
+       * ===================================
+       */
+
+      let botResult: {
+        success: boolean;
+
+        reply?: string;
+      };
+
+      try {
+        botResult = await processMessage({
+          user_id,
+
+          message: text,
+
+          channel: "META_WHATSAPP",
+        });
+
+        /**
+         * LOG BOT RESPONSE
+         */
+
+        console.log("META BOT RESPONSE", {
+          user_id,
+
+          success: botResult.success,
+
+          reply: botResult.reply,
+        });
+      } catch (err) {
+        console.error("META BOT PROCESSING ERROR", err);
+
+        botResult = {
+          success: false,
+
+          reply: "Sorry, something went wrong while processing your request.",
+        };
+      }
+
+      /**
+       * ===================================
+       * SEND WHATSAPP REPLY
+       * ===================================
+       */
+
+      try {
+        await sendMetaWhatsAppMessage({
+          to: from,
+
+          text: botResult.reply || "Sorry, I could not process your request.",
+        });
+
+        console.log("META WHATSAPP REPLY SENT", {
+          to: from,
+        });
+      } catch (err) {
+        console.error("FAILED TO SEND META REPLY", err);
+      }
     }
 
     /**
@@ -157,6 +347,10 @@ export async function POST(req: Request) {
      */
 
     const status = value?.statuses?.[0];
+
+    /**
+     * STATUS EXISTS
+     */
 
     if (status) {
       /**
@@ -204,9 +398,7 @@ export async function POST(req: Request) {
        */
 
       if (isDelivered) {
-        console.log("META MESSAGE DELIVERED:");
-
-        console.log({
+        console.log("META MESSAGE DELIVERED", {
           doctor_id: integration?.doctor_id || null,
 
           message_id: messageId,
@@ -217,21 +409,12 @@ export async function POST(req: Request) {
 
           timestamp,
         });
-
-        /**
-         * FUTURE:
-         * - analytics
-         * - delivery tracking
-         * - dashboard updates
-         */
       } else if (isPending) {
 
       /**
        * PENDING
        */
-        console.log("META MESSAGE PENDING:");
-
-        console.log({
+        console.log("META MESSAGE PENDING", {
           doctor_id: integration?.doctor_id || null,
 
           message_id: messageId,
@@ -245,11 +428,9 @@ export async function POST(req: Request) {
       } else if (isFailure) {
 
       /**
-       * FAILED
+       * FAILURE
        */
-        console.error("META MESSAGE FAILED:");
-
-        console.error({
+        console.error("META MESSAGE FAILED", {
           doctor_id: integration?.doctor_id || null,
 
           message_id: messageId,
@@ -266,22 +447,12 @@ export async function POST(req: Request) {
 
           timestamp,
         });
-
-        /**
-         * FUTURE:
-         * - retries
-         * - alerting
-         * - admin notifications
-         * - failed delivery DB tracking
-         */
       } else {
 
       /**
        * UNKNOWN
        */
-        console.warn("UNKNOWN META STATUS:");
-
-        console.warn({
+        console.warn("UNKNOWN META STATUS", {
           doctor_id: integration?.doctor_id || null,
 
           message_id: messageId,
@@ -307,10 +478,18 @@ export async function POST(req: Request) {
 
         message: "Webhook received",
       },
-      { status: 200 },
+      {
+        status: 200,
+      },
     );
   } catch (err) {
-    console.error("META WEBHOOK POST ERROR:", err);
+    /**
+     * =====================================
+     * ERROR HANDLING
+     * =====================================
+     */
+
+    console.error("META WEBHOOK POST ERROR", err);
 
     return NextResponse.json(
       {
@@ -318,7 +497,9 @@ export async function POST(req: Request) {
 
         message: "Webhook processing failed",
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }

@@ -1,12 +1,44 @@
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
+
 import dbClient from "@/lib/db";
+
 import { WhatsAppIntegration } from "@/entities/WhatsAppIntegration";
+
+import { processMessage } from "@/lib/bot/process-message/process-message";
+
+import { sendMessageBirdMessage } from "../send-message";
+
+/**
+ * =========================================
+ * MESSAGEBIRD WEBHOOK
+ * =========================================
+ *
+ * Purpose:
+ * - receive WhatsApp messages
+ * - validate bot channel
+ * - process chatbot requests
+ * - handle statuses
+ * - prepare outbound replies
+ * =========================================
+ */
 
 export async function POST(req: Request) {
   try {
+    /**
+     * =====================================
+     * INIT DB
+     * =====================================
+     */
+
     await dbClient.init();
+
+    /**
+     * =====================================
+     * REQUEST BODY
+     * =====================================
+     */
 
     const body = await req.json();
 
@@ -20,6 +52,14 @@ export async function POST(req: Request) {
 
     /**
      * =====================================
+     * EXTRACT MESSAGE
+     * =====================================
+     */
+
+    const message = body?.message || null;
+
+    /**
+     * =====================================
      * EXTRACT CHANNEL ID
      * =====================================
      */
@@ -27,19 +67,50 @@ export async function POST(req: Request) {
     const channel_id =
       body?.channelId ||
       body?.channel_id ||
-      body?.message?.channelId ||
-      body?.message?.channel_id ||
+      message?.channelId ||
+      message?.channel_id ||
       null;
 
     /**
      * =====================================
-     * FIND OWNER DOCTOR
+     * VALIDATE BOT CHANNEL
+     * =====================================
+     */
+
+    const validChannel = channel_id === process.env.MESSAGE_BIRD_CHANNEL_ID;
+
+    /**
+     * INVALID CHANNEL
+     */
+
+    if (!validChannel) {
+      console.warn("INVALID MESSAGEBIRD CHANNEL", {
+        received: channel_id,
+
+        expected: process.env.MESSAGE_BIRD_CHANNEL_ID,
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+
+          message: "Ignored invalid channel",
+        },
+        {
+          status: 200,
+        },
+      );
+    }
+
+    /**
+     * =====================================
+     * FIND INTEGRATION OWNER
      * =====================================
      */
 
     let integration = null;
 
-    if (channel_id) {
+    try {
       const integrationRepo =
         dbClient.client.getRepository(WhatsAppIntegration);
 
@@ -53,39 +124,46 @@ export async function POST(req: Request) {
         })
         .getOne();
 
-      if (integration) {
-        console.log("MESSAGEBIRD WEBHOOK OWNER FOUND:", {
-          doctor_id: integration.doctor_id,
+      /**
+       * LOG RESULT
+       */
 
-          provider: integration.provider,
-        });
-      } else {
-        console.warn(
-          "NO MESSAGEBIRD INTEGRATION FOUND FOR CHANNEL:",
-          channel_id,
-        );
-      }
+      console.log("WHATSAPP INTEGRATION:", {
+        found: !!integration,
+
+        doctor_id: integration?.doctor_id || null,
+      });
+    } catch (err) {
+      console.error("FAILED TO LOAD WHATSAPP INTEGRATION", err);
     }
 
     /**
      * =====================================
-     * INCOMING MESSAGE
+     * HANDLE MESSAGE EVENTS
      * =====================================
      */
 
-    const message = body?.message;
-
     if (message) {
-      const type = message?.type || "text";
-
       /**
-       * TEXT
+       * ===================================
+       * BASIC MESSAGE DATA
+       * ===================================
        */
 
-      const text = message?.content?.text || null;
+      const type = message?.type || "text";
+
+      const text = message?.content?.text || "";
+
+      const from = message?.from || null;
+
+      const to = message?.to || null;
+
+      const messageId = message?.id || null;
 
       /**
+       * ===================================
        * MEDIA
+       * ===================================
        */
 
       const image = message?.content?.image || null;
@@ -96,16 +174,20 @@ export async function POST(req: Request) {
 
       const document = message?.content?.document || null;
 
-      console.log("NEW MESSAGEBIRD MESSAGE:");
+      /**
+       * ===================================
+       * LOG MESSAGE
+       * ===================================
+       */
 
-      console.log({
+      console.log("INCOMING WHATSAPP MESSAGE", {
         doctor_id: integration?.doctor_id || null,
 
-        id: message.id,
+        message_id: messageId,
 
-        from: message.from,
+        from,
 
-        to: message.to,
+        to,
 
         type,
 
@@ -121,32 +203,180 @@ export async function POST(req: Request) {
       });
 
       /**
-       * FUTURE:
-       * - save messages
-       * - doctor notifications
-       * - chatbot
-       * - analytics
-       * - live dashboard
+       * ===================================
+       * VALIDATE RECIPIENT
+       * ===================================
        */
+
+      const isBotRecipient = to === process.env.MESSAGEBIRD_PHONE_NUMBER;
+
+      /**
+       * NOT FOR BOT
+       */
+
+      if (!isBotRecipient) {
+        console.warn("MESSAGE NOT FOR BOT NUMBER", {
+          to,
+
+          expected: process.env.MESSAGEBIRD_PHONE_NUMBER,
+        });
+
+        return NextResponse.json(
+          {
+            success: true,
+
+            message: "Ignored non-bot recipient",
+          },
+          {
+            status: 200,
+          },
+        );
+      }
+
+      /**
+       * ===================================
+       * ONLY SUPPORT TEXT
+       * ===================================
+       */
+
+      if (type !== "text") {
+        console.warn("UNSUPPORTED MESSAGE TYPE", {
+          type,
+        });
+
+        /**
+         * FUTURE:
+         * Send media unsupported reply.
+         */
+
+        return NextResponse.json(
+          {
+            success: true,
+
+            message: "Unsupported message type",
+          },
+          {
+            status: 200,
+          },
+        );
+      }
+
+      /**
+       * ===================================
+       * EMPTY TEXT
+       * ===================================
+       */
+
+      if (!text?.trim()) {
+        return NextResponse.json(
+          {
+            success: true,
+
+            message: "Empty message ignored",
+          },
+          {
+            status: 200,
+          },
+        );
+      }
+
+      /**
+       * ===================================
+       * BUILD BOT USER ID
+       * ===================================
+       *
+       * WhatsApp users are not
+       * authenticated platform users.
+       * ===================================
+       */
+
+      const user_id = `whatsapp:${from}`;
+
+      /**
+       * ===================================
+       * PROCESS BOT MESSAGE
+       * ===================================
+       */
+
+      let botResult;
+
+      try {
+        botResult = await processMessage({
+          user_id,
+
+          message: text,
+
+          channel: "MESSAGE_BIRD",
+        });
+
+        /**
+         * LOG BOT RESULT
+         */
+
+        console.log("BOT RESPONSE GENERATED", {
+          user_id,
+
+          success: botResult.success,
+
+          reply: botResult.reply,
+        });
+      } catch (err) {
+        console.error("BOT PROCESSING FAILED", err);
+
+        botResult = {
+          success: false,
+
+          reply: "Sorry, something went wrong while processing your request.",
+        };
+      }
+
+      /**
+       * ===================================
+       * SEND REPLY
+       * ===================================
+       *
+       * FUTURE:
+       * Replace with actual
+       * MessageBird sender.
+       * ===================================
+       */
+
+      console.log("WHATSAPP BOT REPLY", {
+        to: from,
+
+        reply: botResult.reply,
+      });
+
+      /**
+       * ===================================
+       * SEND WHATSAPP REPLY
+       * ===================================
+       */
+
+      await sendMessageBirdMessage({
+        to: from,
+
+        text: botResult.reply || "Sorry, I could not process your request.",
+      });
     }
 
     /**
      * =====================================
-     * DELIVERY STATUS
+     * DELIVERY STATUS EVENTS
      * =====================================
      */
 
     const status = body?.status || body?.message?.status || null;
 
-    if (status) {
-      /**
-       * NORMALIZE STATUS
-       */
+    /**
+     * STATUS EXISTS
+     */
 
+    if (status) {
       const normalizedStatus = String(status).toUpperCase();
 
       /**
-       * COMMON DETAILS
+       * COMMON DATA
        */
 
       const messageId = body?.id || body?.message?.id || null;
@@ -192,84 +422,55 @@ export async function POST(req: Request) {
        */
 
       if (isDelivered) {
-        console.log("MESSAGEBIRD MESSAGE DELIVERED:");
-
-        console.log({
-          doctor_id: integration?.doctor_id || null,
+        console.log("MESSAGE DELIVERED", {
+          recipient,
 
           message_id: messageId,
-
-          recipient,
 
           status: normalizedStatus,
 
           timestamp,
         });
       } else if (isPending) {
-
-      /**
-       * PENDING
-       */
-        console.log("MESSAGEBIRD MESSAGE PENDING:");
-
-        console.log({
-          doctor_id: integration?.doctor_id || null,
+        /**
+         * PENDING
+         */
+        console.log("MESSAGE PENDING", {
+          recipient,
 
           message_id: messageId,
-
-          recipient,
 
           status: normalizedStatus,
 
           timestamp,
         });
       } else if (isFailure) {
-
-      /**
-       * FAILED
-       */
-        console.error("MESSAGEBIRD MESSAGE FAILED:");
-
-        console.error({
-          doctor_id: integration?.doctor_id || null,
+        /**
+         * FAILURE
+         */
+        console.error("MESSAGE DELIVERY FAILED", {
+          recipient,
 
           message_id: messageId,
 
-          recipient,
-
           status: normalizedStatus,
 
-          error_code: errorCode,
+          errorCode,
 
-          error_message: errorMessage,
+          errorMessage,
 
           timestamp,
         });
-
-        /**
-         * FUTURE:
-         * - retries
-         * - alerting
-         * - admin notifications
-         * - failed delivery DB tracking
-         */
       } else {
-
-      /**
-       * UNKNOWN
-       */
-        console.warn("UNKNOWN MESSAGEBIRD STATUS:");
-
-        console.warn({
-          doctor_id: integration?.doctor_id || null,
+        /**
+         * UNKNOWN
+         */
+        console.warn("UNKNOWN MESSAGE STATUS", {
+          recipient,
 
           message_id: messageId,
 
-          recipient,
-
           status: normalizedStatus,
-
-          timestamp,
         });
       }
     }
@@ -286,10 +487,18 @@ export async function POST(req: Request) {
 
         message: "Webhook received",
       },
-      { status: 200 },
+      {
+        status: 200,
+      },
     );
   } catch (err) {
-    console.error("MESSAGEBIRD WEBHOOK POST ERROR:", err);
+    /**
+     * =====================================
+     * ERROR HANDLING
+     * =====================================
+     */
+
+    console.error("MESSAGEBIRD WEBHOOK ERROR", err);
 
     return NextResponse.json(
       {
@@ -297,7 +506,9 @@ export async function POST(req: Request) {
 
         message: "Webhook processing failed",
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }

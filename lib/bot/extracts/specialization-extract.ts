@@ -20,25 +20,19 @@ const SPECIALIZATIONS = [
   {
     name: "Dentist",
 
-    keywords: ["dentist", "tooth doctor", "dental", "teeth"],
+    keywords: ["dentist", "tooth doctor", "dental", "teeth", "gum"],
   },
 
   {
     name: "Pediatrician",
 
-    keywords: [
-      "children doctor",
-      "baby doctor",
-      "pediatrician",
-      "kids doctor",
-      "child specialist",
-    ],
+    keywords: ["children", "baby", "pediatrician", "kids", "child"],
   },
 
   {
     name: "General Physician",
 
-    keywords: ["doctor", "general doctor", "physician", "gp"],
+    keywords: ["doctor", "general doctor", "physician", "gp", "dr"],
   },
 ];
 

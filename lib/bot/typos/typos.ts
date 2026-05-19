@@ -20,6 +20,8 @@ export const TYPO_MAP: Record<string, string> = {
 
   apointment: "appointment",
 
+  apiontment: "appointment",
+
   tmrw: "tomorrow",
 
   tomorow: "tomorrow",
@@ -35,4 +37,6 @@ export const TYPO_MAP: Record<string, string> = {
   cncel: "cancel",
 
   cancell: "cancel",
+
+  cencel: "cancel",
 };

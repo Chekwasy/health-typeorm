@@ -38,7 +38,11 @@ export async function mergeContext({
   conversation: BotConversation;
 
   extracted: Record<string, any>;
-}) {
+}): Promise<{
+  currentConversation: BotConversation;
+
+  context: Record<string, any>;
+}> {
   /**
    * =====================================
    * ENSURE DB CONNECTION
@@ -73,11 +77,7 @@ export async function mergeContext({
    * =====================================
    */
 
-  if (
-    extracted.intent &&
-    extracted.intent !== "UNKNOWN" &&
-    extracted.intent !== "GREETING"
-  ) {
+  if (extracted.intent && extracted.intent !== "UNKNOWN") {
     currentContext.intent = extracted.intent;
   }
 
@@ -197,5 +197,5 @@ export async function mergeContext({
    * =====================================
    */
 
-  return updatedContext;
+  return { currentConversation: conversation, context: updatedContext };
 }
