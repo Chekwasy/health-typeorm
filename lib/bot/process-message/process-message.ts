@@ -10,6 +10,8 @@ import { extendExpiry } from "./conversation/extend-expiry";
 
 import { getActiveIntent } from "./utils/get-active-intent";
 
+import { handleReschedule } from "./handlers/handle-reschedule";
+
 import { handleGreeting } from "./handlers/handle-greeting";
 
 import { handleView } from "./handlers/handle-view";
@@ -170,6 +172,20 @@ export async function processMessage({
 
   /**
    * =====================================
+   * RESCHEDULE APPOINTMENT FLOW
+   * =====================================
+   */
+
+  if (activeIntent === "RESCHEDULE") {
+    return await handleReschedule({
+      user_id,
+      context,
+      channel: botChannel,
+    });
+  }
+
+  /**
+   * =====================================
    * CANCEL APPOINTMENT FLOW
    * =====================================
    */
@@ -193,6 +209,7 @@ export async function processMessage({
   if (activeIntent === "AVAILABILITY") {
     return await handleAvailability({
       context,
+      channel: botChannel,
     });
   }
 

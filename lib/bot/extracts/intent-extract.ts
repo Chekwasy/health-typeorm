@@ -6,6 +6,7 @@
 
 export type ExtractedIntent =
   | "BOOK"
+  | "RESCHEDULE"
   | "CANCEL"
   | "VIEW"
   | "AVAILABILITY"
@@ -31,6 +32,23 @@ export function detectIntent(message: string): ExtractedIntent {
     message.includes("book")
   ) {
     return "BOOK";
+  }
+
+  /**
+   * RESCHEDULE
+   */
+
+  if (
+    (message.includes("reschedule") ||
+      message.includes("change") ||
+      message.includes("move")) &&
+    (message.includes("appointment") ||
+      message.includes("booking") ||
+      message.includes("schedule") ||
+      message.includes("appointments") ||
+      message.includes("bookings"))
+  ) {
+    return "RESCHEDULE";
   }
 
   /**

@@ -14,11 +14,15 @@ import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-special
  * =========================================
  *
  * Improved flow:
- * - supports conversational cancel
- * - supports appointment reference
+ * - conversational cancellation
+ * - voice optimized replies
+ * - context-aware follow ups
  * - graceful fallback handling
- * - follow-up questions
- * - avoids hard failures
+ * - supports:
+ *   - reference
+ *   - doctor
+ *   - date
+ *   - time
  * =========================================
  */
 
@@ -53,14 +57,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * CLEAN INVALID REFERENCES
-   * =====================================
-   *
-   * Sometimes extraction may wrongly
-   * capture words like:
-   * "cancel"
-   * "appointment"
-   * etc
+   * INVALID REFERENCES
    * =====================================
    */
 
@@ -87,10 +84,6 @@ export async function handleCancel({
 
   if (appointmentReference) {
     try {
-      /**
-       * ATTEMPT CANCELLATION
-       */
-
       const result = await cancelAppointment(appointmentReference, user_id);
 
       /**
@@ -98,22 +91,23 @@ export async function handleCancel({
        */
 
       if (result.success) {
-        if (channel !== "VOICE")
+        if (channel === "VOICE") {
           return {
             success: true,
 
-            reply: "Your appointment has been cancelled successfully.",
-          };
-        else {
-          return {
-            success: true,
             reply: "Your appointment has been cancelled successfully.",
           };
         }
+
+        return {
+          success: true,
+
+          reply: "Your appointment has been cancelled successfully.",
+        };
       }
 
       /**
-       * LOG FAILURE
+       * FALL THROUGH
        */
 
       console.log("REFERENCE CANCELLATION FAILED", {
@@ -121,22 +115,62 @@ export async function handleCancel({
 
         reason: result.message,
       });
-
-      /**
-       * FALL THROUGH
-       *
-       * Continue conversational search
-       */
     } catch (err) {
-      /**
-       * LOG ERROR
-       */
-
       console.error("REFERENCE CANCELLATION ERROR", err);
+    }
+  }
 
-      /**
-       * FALL THROUGH
-       */
+  /**
+   * =====================================
+   * VOICE FOLLOW-UP HANDLING
+   * =====================================
+   *
+   * Voice users should
+   * naturally provide:
+   * - date
+   * - time
+   *
+   * since references are
+   * hard to say verbally.
+   * =====================================
+   */
+
+  if (channel === "VOICE") {
+    /**
+     * BOTH DATE + TIME MISSING
+     */
+
+    if (!context.appointment_date && !context.appointment_time) {
+      return {
+        success: false,
+
+        reply:
+          "Please mention the appointment date and time you want to cancel.",
+      };
+    }
+
+    /**
+     * DATE ONLY MISSING
+     */
+
+    if (!context.appointment_date) {
+      return {
+        success: false,
+
+        reply: "Please mention the appointment date you want to cancel.",
+      };
+    }
+
+    /**
+     * TIME ONLY MISSING
+     */
+
+    if (!context.appointment_time && !context.time_period) {
+      return {
+        success: false,
+
+        reply: "Please mention the appointment time you want to cancel.",
+      };
     }
   }
 
@@ -152,20 +186,12 @@ export async function handleCancel({
     !context.specialization &&
     !context.appointment_date
   ) {
-    if (channel !== "VOICE")
-      return {
-        success: false,
+    return {
+      success: false,
 
-        reply:
-          "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
-      };
-    else {
-      return {
-        success: false,
-        reply:
-          "Which appointment would you like to cancel? You can mention the doctor name, date and or time.",
-      };
-    }
+      reply:
+        "Which appointment would you like to cancel? You can mention the doctor name, date or time.",
+    };
   }
 
   /**
@@ -177,7 +203,7 @@ export async function handleCancel({
   let doctor = null;
 
   /**
-   * DOCTOR ID
+   * BY ID
    */
 
   if (context.doctor_id) {
@@ -189,19 +215,7 @@ export async function handleCancel({
   }
 
   /**
-   * DOCTOR NAME
-   */
-
-  if (!doctor && context.doctor_name) {
-    doctor = await profileRepo.findOne({
-      where: {
-        id: context.doctor_id,
-      },
-    });
-  }
-
-  /**
-   * SPECIALIZATION SEARCH
+   * BY SPECIALIZATION
    */
 
   if (!doctor && context.specialization) {
@@ -232,61 +246,27 @@ export async function handleCancel({
 
   if (!matches.length) {
     /**
-     * MISSING DATE
+     * VOICE FRIENDLY
      */
 
-    if (!context.appointment_date) {
-      if (channel !== "VOICE") {
-        return {
-          success: false,
-          reply:
-            "I could not find a matching appointment. What date was the appointment scheduled for?",
-        };
-      } else {
-        return {
-          success: false,
-          reply:
-            "I could not find a matching appointment. What date was the appointment scheduled for?",
-        };
-      }
-    }
-
-    /**
-     * MISSING TIME
-     */
-
-    if (!context.appointment_time && !context.time_period) {
-      if (channel !== "VOICE") {
-        return {
-          success: false,
-          reply:
-            "I could not find a matching appointment. What time was the appointment?",
-        };
-      } else {
-        return {
-          success: false,
-          reply:
-            "I could not find a matching appointment. What time was the appointment?",
-        };
-      }
-    }
-
-    /**
-     * GENERAL FAILURE
-     */
-
-    if (channel !== "VOICE") {
+    if (channel === "VOICE") {
       return {
         success: false,
 
-        reply: "I could not find any matching active appointment to cancel.",
-      };
-    } else {
-      return {
-        success: false,
-        reply: "I could not find any matching active appointment to cancel.",
+        reply:
+          "I could not find a matching appointment. Please mention the doctor, appointment date and time again.",
       };
     }
+
+    /**
+     * WEB/TEXT
+     */
+
+    return {
+      success: false,
+
+      reply: "I could not find any matching active appointment to cancel.",
+    };
   }
 
   /**
@@ -306,6 +286,22 @@ export async function handleCancel({
 
         const start = new Date(appointment.slot.start_time);
 
+        /**
+         * VOICE FORMAT
+         */
+
+        if (channel === "VOICE") {
+          return `Appointment ${index + 1} with ${
+            matchedDoctor?.title || "Dr"
+          } ${matchedDoctor?.first_name} ${
+            matchedDoctor?.last_name
+          } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
+        }
+
+        /**
+         * WEB FORMAT
+         */
+
         return `${index + 1}. ${matchedDoctor?.title || "Dr"} ${
           matchedDoctor?.first_name
         } ${matchedDoctor?.last_name}
@@ -321,12 +317,32 @@ ${appointment.id}`;
       }),
     );
 
+    /**
+     * VOICE RESPONSE
+     */
+
+    if (channel === "VOICE") {
+      return {
+        success: false,
+
+        reply: `I found multiple appointments matching your request.
+
+${options.join(". ")}.
+
+Please mention the appointment date and time you want to cancel.`,
+      };
+    }
+
+    /**
+     * WEB RESPONSE
+     */
+
     return {
       success: false,
 
       reply: `I found multiple matching appointments.
 
-Please specify which one you want to cancel (copy and paste the reference of the appointment):
+Please specify which one you want to cancel:
 
 ${options.join("\n\n")}`,
     };
@@ -372,14 +388,31 @@ ${options.join("\n\n")}`,
 
   /**
    * SLOT DATE
-   * =====================================
    */
 
   const start = new Date(appointment.slot.start_time);
 
   /**
    * =====================================
-   * SUCCESS RESPONSE
+   * VOICE SUCCESS
+   * =====================================
+   */
+
+  if (channel === "VOICE") {
+    return {
+      success: true,
+
+      reply: `Your appointment with ${matchedDoctor?.title || "Dr"} ${
+        matchedDoctor?.first_name
+      } ${
+        matchedDoctor?.last_name
+      } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()} has been cancelled successfully.`,
+    };
+  }
+
+  /**
+   * =====================================
+   * WEB SUCCESS
    * =====================================
    */
 
