@@ -65,9 +65,7 @@ export async function mergeContext({
    * =====================================
    */
 
-  const currentContext: Record<string, any> = conversation.context || {
-    active_intent: null,
-  };
+  const currentContext: Record<string, any> = conversation.context || {};
 
   /**
    * =====================================

@@ -1,33 +1,67 @@
+import dbClient from "@/lib/db";
+
 import { BotConversation } from "@/entities/BotConversation";
+
 /**
  * =========================================
  * RESET CONVERSATION CONTEXT
  * =========================================
  *
  * Purpose:
- * - clear completed conversational flow
- * - reset intent
- * - remove stale extracted entities
- * - prepare for fresh conversation
- *
- * Use After:
- * - booking success
- * - cancellation success
- * - reschedule success
- * - greeting handled
- * - unknown intent handled
- * - completed availability flow
+ * - reload fresh conversation entity
+ * - avoid stale object issues
+ * - safely reset context
+ * - save directly to DB
  * =========================================
  */
 
 export async function resetConversationContext(conversation: BotConversation) {
   /**
    * =====================================
-   * CLEAR CONTEXT
+   * ENSURE DB CONNECTION
    * =====================================
    */
 
-  conversation.context = { active_intent: null };
+  await dbClient.init();
+
+  /**
+   * =====================================
+   * REPOSITORY
+   * =====================================
+   */
+
+  const conversationRepo = dbClient.client.getRepository(BotConversation);
+
+  /**
+   * =====================================
+   * FIND CONVERSATION
+   * =====================================
+   */
+
+  const updatedConversation = await conversationRepo.findOne({
+    where: {
+      id: conversation.id,
+    },
+  });
+
+  /**
+   * NOT FOUND
+   * =====================================
+   */
+
+  if (!updatedConversation) {
+    console.warn("CONVERSATION NOT FOUND");
+
+    return null;
+  }
+
+  /**
+   * =====================================
+   * RESET CONTEXT
+   * =====================================
+   */
+
+  updatedConversation.context = {};
 
   /**
    * =====================================
@@ -35,7 +69,7 @@ export async function resetConversationContext(conversation: BotConversation) {
    * =====================================
    */
 
-  conversation.current_intent = null;
+  updatedConversation.current_intent = null;
 
   /**
    * =====================================
@@ -43,15 +77,15 @@ export async function resetConversationContext(conversation: BotConversation) {
    * =====================================
    */
 
-  conversation.last_message = null;
+  updatedConversation.last_message = null;
 
   /**
    * =====================================
-   * UPDATE TIME
+   * SAVE
    * =====================================
    */
 
-  conversation.updated_at = new Date();
+  await conversationRepo.save(updatedConversation);
 
   /**
    * =====================================
@@ -60,16 +94,16 @@ export async function resetConversationContext(conversation: BotConversation) {
    */
 
   console.log("CONVERSATION CONTEXT RESET", {
-    conversation_id: conversation.id,
+    conversation_id: updatedConversation.id,
 
-    user_id: conversation.user_id,
+    user_id: updatedConversation.user_id,
   });
 
   /**
    * =====================================
-   * RETURN UPDATED CONVERSATION
+   * RETURN
    * =====================================
    */
 
-  return conversation;
+  return updatedConversation;
 }
