@@ -81,7 +81,7 @@ export async function loadConversation({
 
       channel: channel as any,
 
-      context: {},
+      context: { active_intent: null },
 
       expires_at: expiresAt,
     });

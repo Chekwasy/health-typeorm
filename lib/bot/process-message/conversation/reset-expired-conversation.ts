@@ -106,7 +106,7 @@ export async function resetExpiredConversation(conversation: BotConversation) {
    * =====================================
    */
 
-  conversation.context = {};
+  conversation.context = { active_intent: null };
 
   /**
    * =====================================
