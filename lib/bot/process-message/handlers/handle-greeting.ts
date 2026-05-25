@@ -11,13 +11,19 @@
  */
 
 import { BotConversation } from "@/entities/BotConversation";
+import { resetConversationContext } from "../../helpers/reset-context";
 
-export async function handleGreeting(channel: string) {
+export async function handleGreeting(
+  channel: string,
+  conversation: BotConversation,
+) {
   /**
    * =====================================
    * RESPONSE
    * =====================================
    */
+
+  resetConversationContext(conversation);
 
   if (channel !== "VOICE") {
     return {

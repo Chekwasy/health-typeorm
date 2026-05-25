@@ -4,6 +4,7 @@ import { Profile } from "@/entities/Profile";
 
 import { Appointment } from "@/entities/Appointment";
 import { BotConversation } from "@/entities/BotConversation";
+import { resetConversationContext } from "../../helpers/reset-context";
 
 /**
  * =========================================
@@ -31,11 +32,15 @@ import { BotConversation } from "@/entities/BotConversation";
 export async function handleView({
   user_id,
 
+  conversation,
+
   context,
 
   channel,
 }: {
   user_id: string;
+
+  conversation: BotConversation;
 
   context: Record<string, any>;
 
@@ -262,11 +267,13 @@ export async function handleView({
 
   if (!appointments.length) {
     if (channel !== "VOICE") {
+      resetConversationContext(conversation);
       return {
         success: true,
         reply: "You currently have no upcoming appointments.",
       };
     } else {
+      resetConversationContext(conversation);
       return {
         success: true,
         reply: "You currently do not have any upcoming appointments.",
@@ -361,7 +368,7 @@ ${appointment.id}`;
    * FINAL RESPONSE
    * =====================================
    */
-
+  resetConversationContext(conversation);
   if (channel === "VOICE") {
     return {
       success: true,

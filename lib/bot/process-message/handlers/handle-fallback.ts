@@ -11,12 +11,17 @@
  * =========================================
  */
 
-export async function handleFallback() {
+import { BotConversation } from "@/entities/BotConversation";
+import { resetConversationContext } from "../../helpers/reset-context";
+
+export async function handleFallback(conversation: BotConversation) {
   /**
    * =====================================
    * RESPONSE
    * =====================================
    */
+
+  resetConversationContext(conversation);
 
   return {
     success: false,

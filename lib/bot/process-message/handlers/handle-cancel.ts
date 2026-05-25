@@ -7,6 +7,8 @@ import { cancelAppointment } from "../../helpers/cancel-appointment";
 import { findAppointmentForCancellation } from "../../helpers/find-appointment-for-cancel";
 
 import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-specialization";
+import { BotConversation } from "@/entities/BotConversation";
+import { resetConversationContext } from "../../helpers/reset-context";
 
 /**
  * =========================================
@@ -29,11 +31,15 @@ import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-special
 export async function handleCancel({
   user_id,
 
+  conversation,
+
   context,
 
   channel,
 }: {
   user_id: string;
+
+  conversation: BotConversation;
 
   context: Record<string, any>;
 
@@ -391,6 +397,8 @@ ${options.join("\n\n")}`,
    */
 
   const start = new Date(appointment.slot.start_time);
+
+  resetConversationContext(conversation);
 
   /**
    * =====================================
