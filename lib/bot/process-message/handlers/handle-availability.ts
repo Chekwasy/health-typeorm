@@ -16,20 +16,24 @@ import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots
  * =========================================
  *
  * Improved:
+ * - voice friendly replies
  * - avoids undefined access
- * - uses enriched slot response
+ * - conversational responses
  * - supports:
  *   - doctor availability
  *   - specialization availability
  *   - general availability
- * - handles missing data safely
  * =========================================
  */
 
 export async function handleAvailability({
   context,
+
+  channel,
 }: {
   context: Record<string, any>;
+
+  channel: string;
 }) {
   try {
     /**
@@ -50,7 +54,10 @@ export async function handleAvailability({
       return {
         success: false,
 
-        reply: "What date would you like to check availability for?",
+        reply:
+          channel === "VOICE"
+            ? "What date would you like to check doctor availability for?"
+            : "What date would you like to check availability for?",
       };
     }
 
@@ -85,7 +92,7 @@ export async function handleAvailability({
     }
 
     /**
-     * SPECIALIZATION
+     * SPECIALIZATION SEARCH
      */
 
     if (!doctor && context.specialization) {
@@ -122,6 +129,26 @@ export async function handleAvailability({
        */
 
       if (slot) {
+        /**
+         * VOICE RESPONSE
+         */
+
+        if (channel === "VOICE") {
+          return {
+            success: true,
+
+            reply: `${slot.doctor?.full_name || "The doctor"} is available on ${
+              slot.formatted?.date || "that date"
+            } from ${slot.formatted?.start_time || "the available time"} to ${
+              slot.formatted?.end_time || "the end time"
+            }.`,
+          };
+        }
+
+        /**
+         * WEB RESPONSE
+         */
+
         return {
           success: true,
 
@@ -158,14 +185,52 @@ ${slot.formatted?.end_time || "N/A"}`,
         return {
           success: false,
 
-          reply: `No available slots were found for ${doctor.title || "Dr"} ${
-            doctor.first_name || ""
-          } ${doctor.last_name || ""}.`,
+          reply:
+            channel === "VOICE"
+              ? `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
+                  doctor.last_name || ""
+                } does not have any available slots currently.`
+              : `No available slots were found for ${doctor.title || "Dr"} ${
+                  doctor.first_name || ""
+                } ${doctor.last_name || ""}.`,
         };
       }
 
       /**
-       * FORMAT ALTERNATIVES
+       * =================================
+       * VOICE ALTERNATIVES
+       * =================================
+       */
+
+      if (channel === "VOICE") {
+        const voiceAlternatives = alternatives
+          .slice(0, 3)
+          .map((item) => {
+            const start = new Date(item.start_time);
+
+            const end = new Date(item.end_time);
+
+            return `On ${start.toLocaleDateString()} from ${start.toLocaleTimeString()} to ${end.toLocaleTimeString()}`;
+          })
+          .join(". ");
+
+        return {
+          success: false,
+
+          reply: `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
+            doctor.last_name || ""
+          } is unavailable at that requested time.
+
+Available alternative slots include:
+
+${voiceAlternatives}.`,
+        };
+      }
+
+      /**
+       * =================================
+       * WEB ALTERNATIVES
+       * =================================
        */
 
       const altText = alternatives
@@ -175,16 +240,14 @@ ${slot.formatted?.end_time || "N/A"}`,
           const end = new Date(item.end_time);
 
           return `• ${start.toLocaleDateString()}
+
 Start:
 ${start.toLocaleTimeString()}
+
 End:
 ${end.toLocaleTimeString()}`;
         })
         .join("\n\n");
-
-      /**
-       * RESPONSE
-       */
 
       return {
         success: false,
@@ -202,10 +265,6 @@ ${altText}`,
      * =====================================
      * GENERAL AVAILABILITY FLOW
      * =====================================
-     */
-
-    /**
-     * LOAD AVAILABLE SLOTS
      */
 
     const slots = await slotRepo.find({
@@ -228,7 +287,7 @@ ${altText}`,
 
     /**
      * =====================================
-     * BUILD DATE RANGE
+     * DATE RANGE
      * =====================================
      */
 
@@ -260,33 +319,17 @@ ${altText}`,
       filteredSlots = filteredSlots.filter((slot) => {
         const hour = new Date(slot.start_time).getHours();
 
-        /**
-         * MORNING
-         */
-
         if (context.time_period === "morning" && hour >= 6 && hour < 12) {
           return true;
         }
-
-        /**
-         * AFTERNOON
-         */
 
         if (context.time_period === "afternoon" && hour >= 12 && hour < 17) {
           return true;
         }
 
-        /**
-         * EVENING
-         */
-
         if (context.time_period === "evening" && hour >= 17 && hour < 22) {
           return true;
         }
-
-        /**
-         * NIGHT
-         */
 
         if (context.time_period === "night" && (hour >= 22 || hour < 6)) {
           return true;
@@ -304,7 +347,10 @@ ${altText}`,
       return {
         success: false,
 
-        reply: "No doctors are currently available for that date and time.",
+        reply:
+          channel === "VOICE"
+            ? "No doctors are currently available for that date and time."
+            : "No doctors are currently available for that date and time.",
       };
     }
 
@@ -339,20 +385,48 @@ ${altText}`,
     const validDoctors = doctors.filter(Boolean) as Profile[];
 
     /**
-     * STILL EMPTY
+     * NO VALID DOCTORS
      */
 
     if (!validDoctors.length) {
       return {
         success: false,
 
-        reply: "No doctors are currently available.",
+        reply: "No doctors are currently available, please try again later.",
       };
     }
 
     /**
      * =====================================
-     * FORMAT RESPONSE
+     * VOICE RESPONSE
+     * =====================================
+     */
+
+    if (channel === "VOICE") {
+      const doctorText = validDoctors
+        .slice(0, 5)
+        .map(
+          (doctor) =>
+            `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
+              doctor.last_name || ""
+            }`,
+        )
+        .join(", ");
+
+      return {
+        success: true,
+
+        reply: `The following doctors are available on ${new Date(
+          context.appointment_date,
+        ).toLocaleDateString()}.
+
+${doctorText}.`,
+      };
+    }
+
+    /**
+     * =====================================
+     * WEB RESPONSE
      * =====================================
      */
 
@@ -363,12 +437,6 @@ ${altText}`,
         }`;
       })
       .join("\n");
-
-    /**
-     * =====================================
-     * SUCCESS
-     * =====================================
-     */
 
     return {
       success: true,
@@ -389,7 +457,8 @@ ${doctorText}`,
     return {
       success: false,
 
-      reply: "Something went wrong while checking doctor availability.",
+      reply:
+        "Something went wrong while checking doctor availability, please try again later.",
     };
   }
 }

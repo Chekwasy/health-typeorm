@@ -116,6 +116,14 @@ export async function mergeContext({
       extracted.appointment_date || currentContext.appointment_date,
 
     /**
+     * RESCHEDULE DATES
+     */
+
+    to_date: extracted.to_date || currentContext.to_date,
+
+    from_date: extracted.from_date || currentContext.from_date,
+
+    /**
      * TIME PERIOD
      */
 
@@ -127,6 +135,21 @@ export async function mergeContext({
 
     appointment_time:
       extracted.appointment_time || currentContext.appointment_time,
+
+    /**
+     * RESCHEDULE TIME
+     */
+
+    from_time_period:
+      extracted.from_time_period || currentContext.from_time_period,
+
+    from_appointment_time:
+      extracted.from_appointment_time || currentContext.from_appointment_time,
+
+    to_time_period: extracted.to_time_period || currentContext.to_time_period,
+
+    to_appointment_time:
+      extracted.to_appointment_time || currentContext.to_appointment_time,
 
     /**
      * REFERENCE

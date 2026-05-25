@@ -17,12 +17,12 @@ import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots
  * HANDLE BOOK APPOINTMENT
  * =========================================
  *
- * Purpose:
- * - validate booking flow
- * - validate doctor/date/time
- * - allocate slots
- * - create appointment
- * - return conversational response
+ * Improved:
+ * - voice friendly responses
+ * - text friendly responses
+ * - conversational followups
+ * - safer fallback handling
+ * - alternative slot suggestions
  * =========================================
  */
 
@@ -41,6 +41,14 @@ export async function handleBook({
 }) {
   /**
    * =====================================
+   * CHANNEL
+   * =====================================
+   */
+
+  const isVoice = conversation.channel === "VOICE";
+
+  /**
+   * =====================================
    * MAX ACTIVE BOOKINGS
    * =====================================
    */
@@ -55,8 +63,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply:
-        "You already have 4 active appointments. Please complete or cancel one before booking another.",
+      reply: isVoice
+        ? "You already have 4 active appointments. Please complete or cancel one before booking another appointment."
+        : "You already have 4 active appointments. Please complete or cancel one before booking another.",
     };
   }
 
@@ -70,7 +79,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply: "Which doctor or specialization would you like to book?",
+      reply: isVoice
+        ? "Which doctor or specialization would you like to book an appointment with?"
+        : "Which doctor or specialization would you like to book?",
     };
   }
 
@@ -80,10 +91,10 @@ export async function handleBook({
    * =====================================
    */
 
-  let doctor = context.doctor_name || null;
+  let doctor: any = context.doctor_name || null;
 
   /**
-   * SEARCH BY SPECIALIZATION
+   * SPECIALIZATION SEARCH
    */
 
   if (!doctor && context.specialization) {
@@ -98,7 +109,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply: "I could not find the requested doctor or specialization.",
+      reply: isVoice
+        ? "I could not find the requested doctor or specialization. Please try another doctor name or specialization."
+        : "I could not find the requested doctor or specialization.",
     };
   }
 
@@ -112,7 +125,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply: "What date would you like to book the appointment?",
+      reply: isVoice
+        ? "What date would you like to book the appointment for?"
+        : "What date would you like to book the appointment?",
     };
   }
 
@@ -126,7 +141,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply: "You cannot book appointments in the past.",
+      reply: isVoice
+        ? "You cannot book appointments in the past. Please choose another date."
+        : "You cannot book appointments in the past.",
     };
   }
 
@@ -140,8 +157,9 @@ export async function handleBook({
     return {
       success: false,
 
-      reply:
-        "What time would you prefer? Morning, afternoon, evening, 7am, 14:00?, noon, etc.",
+      reply: isVoice
+        ? "What time would you prefer? You can say morning, afternoon, evening, or a specific time like 7 PM."
+        : "What time would you prefer? Morning, afternoon, evening, or a specific time?",
     };
   }
 
@@ -169,7 +187,7 @@ export async function handleBook({
 
   if (!slot) {
     /**
-     * GET ALTERNATIVE SLOTS
+     * GET ALTERNATIVES
      */
 
     const alternatives = await suggestAlternativeSlots({
@@ -184,12 +202,18 @@ export async function handleBook({
       return {
         success: false,
 
-        reply: "No available slots were found for this doctor.",
+        reply: isVoice
+          ? `There are currently no available appointment slots for ${
+              context.doctor_title || "Dr"
+            } ${context.doctor_name || ""}.`
+          : "No available slots were found for this doctor.",
       };
     }
 
     /**
+     * =====================================
      * FORMAT ALTERNATIVES
+     * =====================================
      */
 
     const altText = alternatives
@@ -200,12 +224,50 @@ export async function handleBook({
       })
       .join("\n");
 
+    /**
+     * =====================================
+     * VOICE RESPONSE
+     * =====================================
+     */
+
+    if (isVoice) {
+      const voiceAlternatives = alternatives
+        .slice(0, 3)
+        .map((item) => {
+          const start = new Date(item.start_time);
+
+          return `on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
+        })
+        .join(". ");
+
+      return {
+        success: false,
+
+        reply: `${context.doctor_title || "Dr"} ${
+          context.doctor_name || "the doctor"
+        } is unavailable at that requested time.
+
+Available alternative slots include:
+
+${voiceAlternatives}.`,
+      };
+    }
+
+    /**
+     * =====================================
+     * TEXT RESPONSE
+     * =====================================
+     */
+
     return {
       success: false,
 
-      reply: `${context.doctor_title || "Dr"} ${context.doctor_name} is unavailable at that time.
+      reply: `${context.doctor_title || "Dr"} ${
+        context.doctor_name || ""
+      } is unavailable at that time.
 
-Available alternatives:
+You may consider booking any of the available alternatives:
+
 ${altText}`,
     };
   }
@@ -236,7 +298,7 @@ ${altText}`,
     return {
       success: false,
 
-      reply: booking.message,
+      reply: booking.message || "Failed to create appointment.",
     };
   }
 
@@ -244,22 +306,42 @@ ${altText}`,
    * =====================================
    * CLEAR MEMORY
    * =====================================
-   *
-   * Since booking completed.
    */
 
   conversation.context = {};
 
   /**
    * =====================================
-   * FORMAT SUCCESS
+   * SLOT DATE
    * =====================================
    */
 
   const start = new Date(slot.start_time);
 
   /**
-   * SUCCESS RESPONSE
+   * =====================================
+   * VOICE SUCCESS
+   * =====================================
+   */
+
+  if (isVoice) {
+    return {
+      success: true,
+
+      reply: `Your appointment has been booked successfully with ${
+        context.doctor_title || "Dr"
+      } ${context.doctor_name || ""}.
+
+The appointment is scheduled for ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}.
+
+Reason for visit: ${context.reason || "general consultation"}.`,
+    };
+  }
+
+  /**
+   * =====================================
+   * TEXT SUCCESS
+   * =====================================
    */
 
   return {
@@ -275,6 +357,9 @@ ${start.toLocaleDateString()}
 
 Time:
 ${start.toLocaleTimeString()}
+
+Reason:
+${context.reason || "General consultation"}
 
 Reference:
 ${booking.appointment?.id || "N/A"}`,

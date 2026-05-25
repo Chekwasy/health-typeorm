@@ -6,6 +6,8 @@ import { TYPO_MAP } from "../typos/typos";
 import { extractTimeData } from "./time-extract";
 import { extractReason } from "./reason-extract";
 import { extractAppointmentReference } from "./appointment-extract";
+import { extractRescheduleDates } from "./reschedule-date-extract";
+import { extractRescheduleTimeData } from "./reschedule-time-extract";
 
 /**
  * =========================================
@@ -29,6 +31,18 @@ export interface ExtractedData {
   appointment_date: Date | null;
 
   time_period: string | null;
+
+  to_date: Date | null;
+
+  from_date: Date | null;
+
+  from_time_period: string | null;
+
+  from_appointment_time: string | null;
+
+  to_time_period: string | null;
+
+  to_appointment_time: string | null;
 
   appointment_time: string | null;
 
@@ -96,6 +110,15 @@ export async function extractMessage(
 
   const appointment_date = extractDate(normalizedMessage);
 
+  const { to_date, from_date } = extractRescheduleDates(normalizedMessage);
+
+  const {
+    from_time_period,
+    from_appointment_time,
+    to_time_period,
+    to_appointment_time,
+  } = extractRescheduleTimeData(normalizedMessage);
+
   const { time_period = null, appointment_time = null } =
     extractTimeData(normalizedMessage);
 
@@ -121,6 +144,18 @@ export async function extractMessage(
     specialization,
 
     appointment_date,
+
+    to_date,
+
+    from_date,
+
+    from_time_period,
+
+    from_appointment_time,
+
+    to_time_period,
+
+    to_appointment_time,
 
     time_period,
 

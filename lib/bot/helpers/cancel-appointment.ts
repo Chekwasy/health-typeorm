@@ -38,7 +38,7 @@ export async function cancelAppointment(
     return {
       success: false,
 
-      message: "Appointment not found",
+      message: "Your appointment could not be found please try again later.",
     };
   }
 
@@ -50,7 +50,15 @@ export async function cancelAppointment(
     return {
       success: false,
 
-      message: "Appointment already cancelled",
+      message: "Your appointment is already cancelled by you.",
+    };
+  }
+
+  if (appointment.status === "CANCELLED_BY_DOCTOR") {
+    return {
+      success: false,
+
+      message: "Your appointment is already cancelled by the doctor.",
     };
   }
 
