@@ -1,5 +1,4 @@
 import { BotConversation } from "@/entities/BotConversation";
-
 /**
  * =========================================
  * RESET CONVERSATION CONTEXT
@@ -21,7 +20,7 @@ import { BotConversation } from "@/entities/BotConversation";
  * =========================================
  */
 
-export function resetConversationContext(conversation: BotConversation) {
+export async function resetConversationContext(conversation: BotConversation) {
   /**
    * =====================================
    * CLEAR CONTEXT
