@@ -25,11 +25,10 @@ export function detectIntent(message: string): ExtractedIntent {
    */
 
   if (
-    ((message.includes("book") ||
+    (message.includes("book") ||
       message.includes("schedule") ||
       message.includes("see")) &&
-      (message.includes("doctor") || message.includes("dr"))) ||
-    message.includes("book")
+    (message.includes("doctor") || message.includes("dr"))
   ) {
     return "BOOK";
   }
