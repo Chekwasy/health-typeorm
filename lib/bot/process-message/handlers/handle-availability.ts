@@ -9,6 +9,8 @@ import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-special
 import { findAvailableSlot } from "../../helpers/find-available-slot";
 
 import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots";
+import { resetConversationContext } from "../../helpers/reset-context";
+import { BotConversation } from "@/entities/BotConversation";
 
 /**
  * =========================================
@@ -27,10 +29,12 @@ import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots
  */
 
 export async function handleAvailability({
+  conversation,
   context,
 
   channel,
 }: {
+  conversation: BotConversation;
   context: Record<string, any>;
 
   channel: string;
@@ -412,6 +416,8 @@ ${altText}`,
             }`,
         )
         .join(", ");
+
+      resetConversationContext(conversation);
 
       return {
         success: true,

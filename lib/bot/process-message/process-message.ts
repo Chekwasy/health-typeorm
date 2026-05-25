@@ -153,7 +153,7 @@ export async function processMessage({
    */
 
   if (activeIntent === "GREETING") {
-    return await handleGreeting(botChannel);
+    return await handleGreeting(botChannel, currentConversation);
   }
 
   /**
@@ -165,6 +165,7 @@ export async function processMessage({
   if (activeIntent === "VIEW") {
     return await handleView({
       user_id,
+      conversation: currentConversation,
       context,
       channel: botChannel,
     });
@@ -179,6 +180,7 @@ export async function processMessage({
   if (activeIntent === "RESCHEDULE") {
     return await handleReschedule({
       user_id,
+      conversation: currentConversation,
       context,
       channel: botChannel,
     });
@@ -194,6 +196,8 @@ export async function processMessage({
     return await handleCancel({
       user_id,
 
+      conversation: currentConversation,
+
       context,
 
       channel: botChannel,
@@ -208,6 +212,7 @@ export async function processMessage({
 
   if (activeIntent === "AVAILABILITY") {
     return await handleAvailability({
+      conversation: currentConversation,
       context,
       channel: botChannel,
     });
@@ -235,5 +240,5 @@ export async function processMessage({
    * =====================================
    */
 
-  return await handleFallback();
+  return await handleFallback(currentConversation);
 }

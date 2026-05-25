@@ -12,6 +12,10 @@ import { findAvailableSlot } from "../../helpers/find-available-slot";
 
 import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots";
 
+import { BotConversation } from "@/entities/BotConversation";
+
+import { resetConversationContext } from "../../helpers/reset-context";
+
 /**
  * =========================================
  * HANDLE RESCHEDULE APPOINTMENT
@@ -40,11 +44,15 @@ import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots
 export async function handleReschedule({
   user_id,
 
+  conversation,
+
   context,
 
   channel,
 }: {
   user_id: string;
+
+  conversation: BotConversation;
 
   context: Record<string, any>;
 
@@ -470,6 +478,8 @@ ${altText}`,
    */
 
   const start = new Date(slot.start_time);
+
+  resetConversationContext(conversation);
 
   /**
    * VOICE

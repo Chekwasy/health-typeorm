@@ -11,6 +11,7 @@ import { hasReachedBookingLimit } from "../../helpers/has-reached-booking-limit"
 import { isPastDate } from "../../helpers/helpers";
 
 import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots";
+import { resetConversationContext } from "../../helpers/reset-context";
 
 /**
  * =========================================
@@ -317,6 +318,8 @@ ${altText}`,
    */
 
   const start = new Date(slot.start_time);
+
+  resetConversationContext(conversation);
 
   /**
    * =====================================
