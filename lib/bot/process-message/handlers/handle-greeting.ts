@@ -23,7 +23,7 @@ export async function handleGreeting(
    * =====================================
    */
 
-  await resetConversationContext(conversation);
+  resetConversationContext(conversation);
 
   if (channel !== "VOICE") {
     return {
