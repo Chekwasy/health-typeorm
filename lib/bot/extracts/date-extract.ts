@@ -1,5 +1,15 @@
 import * as chrono from "chrono-node";
 
+import { DateTime } from "luxon";
+
+/**
+ * =========================================
+ * BUSINESS TIMEZONE
+ * =========================================
+ */
+
+const BUSINESS_TIMEZONE = "Africa/Lagos";
+
 /**
  * =========================================
  * TYPO NORMALIZATION
@@ -29,8 +39,6 @@ function normalizeDateTypos(message: string) {
     todai: "today",
 
     nxt: "next",
-
-    "this week": "next sunday",
 
     mon: "monday",
 
@@ -75,7 +83,7 @@ function normalizeDatePhrases(message: string) {
    * NEXT TOMORROW
    */
 
-  text = text.replace(/next tomorrow/gi, "in 2 day");
+  text = text.replace(/next tomorrow/gi, "in 2 days");
 
   /**
    * DAY AFTER TOMORROW
@@ -105,10 +113,6 @@ function normalizeDatePhrases(message: string) {
  */
 
 function extractDatePhrase(message: string) {
-  /**
-   * DATE PATTERNS
-   */
-
   const patterns = [
     /**
      * TODAY
@@ -131,6 +135,12 @@ function extractDatePhrase(message: string) {
     /\bnext (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
 
     /**
+     * THIS MONDAY
+     */
+
+    /\bthis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+
+    /**
      * WEEKDAY
      */
 
@@ -138,43 +148,36 @@ function extractDatePhrase(message: string) {
 
     /**
      * 16 may 2026
-     * 16th may 2026
-     * 16 th may 2026
      */
 
     /\b\d{1,2}\s?(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\b/i,
 
     /**
      * 16 may
-     * 16th may
-     * 16 th may
      */
 
     /\b\d{1,2}\s?(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i,
 
     /**
      * may 16
-     * may 16th
-     * may 16 th
      */
 
     /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\s?(st|nd|rd|th)?\b/i,
 
     /**
-     * SIMPLE DAY:
-     * 5
-     * 5th
-     * 5 th
-     * 2nd
-     * 2 nd
+     * SIMPLE DAY
+     *
+     * Only standalone messages like:
+     * "5"
+     * "5th"
      *
      * Prevent:
+     * odd 5
+     * bet 2
      * 4pm
-     * 7am
-     * 14:00
      */
 
-    /\b([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?\b(?!\s?(am|pm|\:))/i,
+    /^(?:\s*)([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?(?:\s*)$/i,
   ];
 
   /**
@@ -196,21 +199,9 @@ function extractDatePhrase(message: string) {
  * =========================================
  * NORMALIZE SIMPLE DAY
  * =========================================
- *
- * Converts:
- * 5
- * 5th
- * 5 th
- * ->
- * 5 May 2026
- * =========================================
  */
 
-function normalizeSimpleDay(phrase: string) {
-  /**
-   * SIMPLE DAY MATCH
-   */
-
+function normalizeSimpleDay(phrase: string, referenceDate: Date) {
   const simpleDayMatch = phrase.match(
     /^([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?$/i,
   );
@@ -224,10 +215,11 @@ function normalizeSimpleDay(phrase: string) {
   }
 
   /**
-   * CURRENT DATE
+   * LAGOS TIME
    */
 
-  const now = new Date();
+  const lagosDate =
+    DateTime.fromJSDate(referenceDate).setZone(BUSINESS_TIMEZONE);
 
   /**
    * DAY
@@ -239,15 +231,13 @@ function normalizeSimpleDay(phrase: string) {
    * MONTH
    */
 
-  const month = now.toLocaleString("default", {
-    month: "long",
-  });
+  const month = lagosDate.toFormat("LLLL");
 
   /**
    * YEAR
    */
 
-  const year = now.getFullYear();
+  const year = lagosDate.year;
 
   /**
    * BUILD FULL DATE
@@ -262,7 +252,23 @@ function normalizeSimpleDay(phrase: string) {
  * =========================================
  */
 
-export function extractDate(rawMessage: string) {
+export function extractDate(
+  rawMessage: string,
+
+  /**
+   * DB TIME / SERVER UTC TIME
+   */
+
+  referenceDate: Date = new Date(),
+) {
+  /**
+   * CONVERT TO BUSINESS TIMEZONE
+   */
+
+  const lagosReferenceDate = DateTime.fromJSDate(referenceDate)
+    .setZone(BUSINESS_TIMEZONE)
+    .toJSDate();
+
   /**
    * TYPO NORMALIZATION
    */
@@ -295,13 +301,13 @@ export function extractDate(rawMessage: string) {
    * NORMALIZE SIMPLE DAY
    */
 
-  datePhrase = normalizeSimpleDay(datePhrase);
+  datePhrase = normalizeSimpleDay(datePhrase, lagosReferenceDate);
 
   /**
    * CHRONO PARSE
    */
 
-  const parsed = chrono.parse(datePhrase, new Date());
+  const parsed = chrono.parse(datePhrase);
 
   /**
    * FAILED PARSE
@@ -317,13 +323,7 @@ export function extractDate(rawMessage: string) {
    * EXTRACT DATE
    */
 
-  const date = parsed[0].start.date();
-
-  /**
-   * REMOVE TIME
-   */
-
-  date.setHours(0, 0, 0, 0);
+  const parsedDate = parsed[0].start.date();
 
   /**
    * LOGGING
@@ -336,12 +336,16 @@ export function extractDate(rawMessage: string) {
 
     datePhrase,
 
-    parsed_date: date,
+    referenceDate,
+
+    lagosReferenceDate,
+
+    parsedDate,
   });
 
   /**
    * RETURN DATE
    */
 
-  return date;
+  return parsedDate;
 }

@@ -32,9 +32,9 @@ export interface ExtractedData {
 
   time_period: string | null;
 
-  to_date: Date | null;
+  to_date: string | null;
 
-  from_date: Date | null;
+  from_date: string | null;
 
   from_time_period: string | null;
 

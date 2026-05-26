@@ -1,11 +1,20 @@
 export const runtime = "nodejs";
 
 import dbClient from "@/lib/db";
+
 import { NextResponse } from "next/server";
+
 import { requireAuth } from "@/lib/auth";
+
 import { Profile } from "@/entities/Profile";
+
 import { DoctorSlot } from "@/entities/DoctorSlot";
-import { Between } from "typeorm";
+
+/**
+ * =========================================
+ * TYPES
+ * =========================================
+ */
 
 type WeekDay =
   | "MONDAY"
@@ -17,15 +26,25 @@ type WeekDay =
 
 interface TimeBlock {
   start: string;
+
   end: string;
 }
 
 interface Body {
   interval: 15 | 30 | 60;
+
   days: string[];
+
   duration: 7 | 14 | 30;
+
   blocks: TimeBlock[];
 }
+
+/**
+ * =========================================
+ * VALID DAYS
+ * =========================================
+ */
 
 const VALID_DAYS: WeekDay[] = [
   "MONDAY",
@@ -36,29 +55,82 @@ const VALID_DAYS: WeekDay[] = [
   "SATURDAY",
 ];
 
+/**
+ * =========================================
+ * DAY MAP
+ * =========================================
+ */
+
 const DAY_MAP: Record<WeekDay, number> = {
   MONDAY: 1,
+
   TUESDAY: 2,
+
   WEDNESDAY: 3,
+
   THURSDAY: 4,
+
   FRIDAY: 5,
+
   SATURDAY: 6,
 };
 
+/**
+ * =========================================
+ * FORMAT APPOINTMENT KEY
+ * =========================================
+ *
+ * FORMAT:
+ *
+ * yyyy-MM-dd-HH-mm
+ *
+ * Example:
+ *
+ * 2026-05-26-14-30
+ * =========================================
+ */
+
+function formatAppointmentKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(date.getDate()).padStart(2, "0")}-${String(
+    date.getHours(),
+  ).padStart(2, "0")}-${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * =========================================
+ * ROUTE
+ * =========================================
+ */
+
 export async function POST(req: Request) {
   try {
+    /**
+     * =====================================
+     * INIT DB
+     * =====================================
+     */
+
     await dbClient.init();
+
+    /**
+     * =====================================
+     * BODY
+     * =====================================
+     */
 
     const body: Body = await req.json();
 
-    const {
-      interval,
-      days,
-      duration,
-      blocks,
-    } = body;
+    const { interval, days, duration, blocks } = body;
 
-    // AUTH
+    /**
+     * =====================================
+     * AUTH
+     * =====================================
+     */
+
     let decoded: any;
 
     try {
@@ -70,19 +142,34 @@ export async function POST(req: Request) {
         },
         {
           status: 401,
-        }
+        },
       );
     }
 
+    /**
+     * =====================================
+     * USER
+     * =====================================
+     */
+
     const userId = decoded.userId;
 
-    const profileRepo =
-      dbClient.client.getRepository(Profile);
+    /**
+     * =====================================
+     * REPOSITORIES
+     * =====================================
+     */
 
-    const slotRepo =
-      dbClient.client.getRepository(DoctorSlot);
+    const profileRepo = dbClient.client.getRepository(Profile);
 
-    // ROLE CHECK
+    const slotRepo = dbClient.client.getRepository(DoctorSlot);
+
+    /**
+     * =====================================
+     * ROLE CHECK
+     * =====================================
+     */
+
     const profile = await profileRepo.findOne({
       where: {
         id: userId,
@@ -96,9 +183,15 @@ export async function POST(req: Request) {
         },
         {
           status: 403,
-        }
+        },
       );
     }
+
+    /**
+     * =====================================
+     * PROFILE COMPLETE
+     * =====================================
+     */
 
     if (!profile.is_profile_complete) {
       return NextResponse.json(
@@ -107,11 +200,16 @@ export async function POST(req: Request) {
         },
         {
           status: 403,
-        }
+        },
       );
     }
 
-    // VALIDATION
+    /**
+     * =====================================
+     * INTERVAL VALIDATION
+     * =====================================
+     */
+
     if (![15, 30, 60].includes(interval)) {
       return NextResponse.json(
         {
@@ -119,262 +217,384 @@ export async function POST(req: Request) {
         },
         {
           status: 400,
-        }
+        },
       );
     }
+
+    /**
+     * =====================================
+     * DURATION VALIDATION
+     * =====================================
+     */
 
     if (![7, 14, 30].includes(duration)) {
       return NextResponse.json(
         {
-          message:
-            "Duration must be 7, 14 or 30 days",
+          message: "Duration must be 7, 14 or 30 days",
         },
         {
           status: 400,
-        }
+        },
       );
     }
+
+    /**
+     * =====================================
+     * DAYS VALIDATION
+     * =====================================
+     */
 
     if (!days || days.length === 0) {
       return NextResponse.json(
         {
-          message:
-            "Select at least one day",
+          message: "Select at least one day",
         },
         {
           status: 400,
-        }
+        },
       );
     }
+
+    /**
+     * =====================================
+     * BLOCKS VALIDATION
+     * =====================================
+     */
 
     if (!blocks || blocks.length === 0) {
       return NextResponse.json(
         {
-          message:
-            "No schedule blocks provided",
+          message: "No schedule blocks provided",
         },
         {
           status: 400,
-        }
+        },
       );
     }
 
-    // RUNTIME DAY VALIDATION
-    const invalidDays = days.filter(
-      (d) => !VALID_DAYS.includes(d as WeekDay)
-    );
+    /**
+     * =====================================
+     * INVALID DAYS
+     * =====================================
+     */
+
+    const invalidDays = days.filter((d) => !VALID_DAYS.includes(d as WeekDay));
 
     if (invalidDays.length > 0) {
       return NextResponse.json(
         {
-          message:
-            "Sunday scheduling is not allowed",
+          message: "Sunday scheduling is not allowed",
+
           invalid_days: invalidDays,
         },
         {
           status: 400,
-        }
+        },
       );
     }
 
+    /**
+     * =====================================
+     * TYPED DAYS
+     * =====================================
+     */
+
     const typedDays = days as WeekDay[];
 
-    // BLOCK OVERLAP VALIDATION
-    const normalizedBlocks = blocks.map(
-      (block) => {
-        const [startHour, startMinute] =
-          block.start
-            .split(":")
-            .map(Number);
+    /**
+     * =====================================
+     * NORMALIZE BLOCKS
+     * =====================================
+     */
 
-        const [endHour, endMinute] =
-          block.end
-            .split(":")
-            .map(Number);
+    const normalizedBlocks = blocks.map((block) => {
+      const [startHour, startMinute] = block.start.split(":").map(Number);
 
-        const startMinutes =
-          startHour * 60 + startMinute;
+      const [endHour, endMinute] = block.end.split(":").map(Number);
 
-        const endMinutes =
-          endHour * 60 + endMinute;
+      const startMinutes = startHour * 60 + startMinute;
 
-        return {
-          ...block,
-          startMinutes,
-          endMinutes,
-        };
-      }
-    );
+      const endMinutes = endHour * 60 + endMinute;
 
-    // invalid ranges
+      return {
+        ...block,
+
+        startMinutes,
+
+        endMinutes,
+      };
+    });
+
+    /**
+     * =====================================
+     * INVALID RANGE
+     * =====================================
+     */
+
     for (const block of normalizedBlocks) {
-      if (
-        block.startMinutes >=
-        block.endMinutes
-      ) {
+      if (block.startMinutes >= block.endMinutes) {
         return NextResponse.json(
           {
-            message:
-              "Invalid time block range",
+            message: "Invalid time block range",
           },
           {
             status: 400,
-          }
+          },
         );
       }
     }
 
-    // overlap detection
-    for (
-      let i = 0;
-      i < normalizedBlocks.length;
-      i++
-    ) {
-      for (
-        let j = i + 1;
-        j < normalizedBlocks.length;
-        j++
-      ) {
+    /**
+     * =====================================
+     * OVERLAP VALIDATION
+     * =====================================
+     */
+
+    for (let i = 0; i < normalizedBlocks.length; i++) {
+      for (let j = i + 1; j < normalizedBlocks.length; j++) {
         const a = normalizedBlocks[i];
+
         const b = normalizedBlocks[j];
 
         const overlaps =
-          a.startMinutes <
-            b.endMinutes &&
-          a.endMinutes >
-            b.startMinutes;
+          a.startMinutes < b.endMinutes && a.endMinutes > b.startMinutes;
 
         if (overlaps) {
           return NextResponse.json(
             {
-              message:
-                "Overlapping time blocks detected",
+              message: "Overlapping time blocks detected",
             },
             {
               status: 400,
-            }
+            },
           );
         }
       }
     }
 
-    // START FROM NEXT DAY 00:00
+    /**
+     * =====================================
+     * NOW
+     * =====================================
+     */
+
     const now = new Date();
+
+    /**
+     * =====================================
+     * START WINDOW
+     * =====================================
+     */
 
     const startWindow = new Date(now);
 
     startWindow.setHours(24, 0, 0, 0);
 
-    // END WINDOW
+    /**
+     * =====================================
+     * END WINDOW
+     * =====================================
+     */
+
     const endWindow = new Date(startWindow);
 
-    endWindow.setDate(
-      endWindow.getDate() + duration - 1
-    );
+    endWindow.setDate(endWindow.getDate() + duration - 1);
 
-    const selectedDayNumbers =
-      typedDays.map((d) => DAY_MAP[d]);
+    /**
+     * =====================================
+     * DAY NUMBERS
+     * =====================================
+     */
 
-    const slotsToInsert: Partial<DoctorSlot>[] =
-      [];
+    const selectedDayNumbers = typedDays.map((d) => DAY_MAP[d]);
+
+    /**
+     * =====================================
+     * INSERT LIST
+     * =====================================
+     */
+
+    const slotsToInsert: Partial<DoctorSlot>[] = [];
+
+    /**
+     * =====================================
+     * DUPLICATE COUNT
+     * =====================================
+     */
 
     let duplicateSkipped = 0;
 
-    // LOOP THROUGH ALL DAYS
+    /**
+     * =====================================
+     * LOOP DAYS
+     * =====================================
+     */
+
     const currentDay = new Date(startWindow);
 
     while (currentDay <= endWindow) {
       const weekDay = currentDay.getDay();
 
-      // ONLY SELECTED DAYS
-      if (
-        selectedDayNumbers.includes(weekDay)
-      ) {
+      /**
+       * ===================================
+       * SELECTED DAYS ONLY
+       * ===================================
+       */
+
+      if (selectedDayNumbers.includes(weekDay)) {
         for (const block of normalizedBlocks) {
-          const startDate = new Date(
-            currentDay
-          );
+          /**
+           * =================================
+           * START DATE
+           * =================================
+           */
+
+          const startDate = new Date(currentDay);
 
           startDate.setHours(
-            Math.floor(
-              block.startMinutes / 60
-            ),
+            Math.floor(block.startMinutes / 60),
+
             block.startMinutes % 60,
+
             0,
-            0
+
+            0,
           );
 
-          const endDate = new Date(
-            currentDay
-          );
+          /**
+           * =================================
+           * END DATE
+           * =================================
+           */
+
+          const endDate = new Date(currentDay);
 
           endDate.setHours(
-            Math.floor(
-              block.endMinutes / 60
-            ),
+            Math.floor(block.endMinutes / 60),
+
             block.endMinutes % 60,
+
             0,
-            0
+
+            0,
           );
 
-          // GENERATE SLOTS
-          let currentSlot = new Date(
-            startDate
-          );
+          /**
+           * =================================
+           * GENERATE SLOTS
+           * =================================
+           */
+
+          let currentSlot = new Date(startDate);
 
           while (currentSlot < endDate) {
-            const slotEnd = new Date(
-              currentSlot.getTime() +
-                interval * 60000
-            );
+            /**
+             * ===============================
+             * SLOT END
+             * ===============================
+             */
+
+            const slotEnd = new Date(currentSlot.getTime() + interval * 60000);
+
+            /**
+             * ===============================
+             * OVERFLOW
+             * ===============================
+             */
 
             if (slotEnd > endDate) {
               break;
             }
 
-            // DUPLICATE CHECK
-            const existingSlot =
-              await slotRepo.findOne({
-                where: {
-                  doctor_id: userId,
-                  start_time:
-                    Between(
-                      new Date(
-                        currentSlot.getTime() -
-                          1000
-                      ),
-                      new Date(
-                        currentSlot.getTime() +
-                          1000
-                      )
-                    ),
-                },
-              });
+            /**
+             * ===============================
+             * APPOINTMENT KEY
+             * ===============================
+             */
+
+            const appointmentKey = formatAppointmentKey(currentSlot);
+
+            const endKey = formatAppointmentKey(slotEnd);
+
+            /**
+             * ===============================
+             * DUPLICATE CHECK
+             * ===============================
+             */
+
+            const existingSlot = await slotRepo.findOne({
+              where: {
+                doctor_id: userId,
+
+                start_time: appointmentKey,
+              },
+            });
+
+            /**
+             * ===============================
+             * DUPLICATE
+             * ===============================
+             */
 
             if (existingSlot) {
               duplicateSkipped++;
+
+              console.log("DUPLICATE SLOT SKIPPED", {
+                appointment_key: appointmentKey,
+              });
             } else {
+
+            /**
+             * ===============================
+             * CREATE SLOT
+             * ===============================
+             */
+              console.log("NEW SLOT GENERATED", {
+                appointment_key: appointmentKey,
+
+                end_key: endKey,
+              });
+
               slotsToInsert.push({
                 doctor_id: userId,
-                start_time: new Date(
-                  currentSlot
-                ),
-                end_time: new Date(
-                  slotEnd
-                ),
+
+                /**
+                 * NEW STRING FORMAT
+                 */
+
+                start_time: appointmentKey,
+
+                end_time: endKey,
+
                 is_booked: false,
               });
             }
+
+            /**
+             * ===============================
+             * NEXT SLOT
+             * ===============================
+             */
 
             currentSlot = slotEnd;
           }
         }
       }
 
-      currentDay.setDate(
-        currentDay.getDate() + 1
-      );
+      /**
+       * ===================================
+       * NEXT DAY
+       * ===================================
+       */
+
+      currentDay.setDate(currentDay.getDate() + 1);
     }
+
+    /**
+     * =====================================
+     * NO VALID SLOTS
+     * =====================================
+     */
 
     if (slotsToInsert.length === 0) {
       return NextResponse.json(
@@ -386,12 +606,23 @@ export async function POST(req: Request) {
         },
         {
           status: 400,
-        }
+        },
       );
     }
 
-    // SAVE
+    /**
+     * =====================================
+     * SAVE SLOTS
+     * =====================================
+     */
+
     await slotRepo.save(slotsToInsert);
+
+    /**
+     * =====================================
+     * SUCCESS
+     * =====================================
+     */
 
     return NextResponse.json(
       {
@@ -400,11 +631,9 @@ export async function POST(req: Request) {
             ? "Recurring schedule created. Some duplicate slots were skipped."
             : "Recurring schedule created successfully",
 
-        slots_created:
-          slotsToInsert.length,
+        slots_created: slotsToInsert.length,
 
-        duplicates_skipped:
-          duplicateSkipped,
+        duplicates_skipped: duplicateSkipped,
 
         active_days: typedDays,
 
@@ -412,13 +641,16 @@ export async function POST(req: Request) {
       },
       {
         status: 200,
-      }
+      },
     );
   } catch (err) {
-    console.error(
-      "RECURRING SCHEDULE ERROR:",
-      err
-    );
+    /**
+     * =====================================
+     * ERROR
+     * =====================================
+     */
+
+    console.error("RECURRING SCHEDULE ERROR:", err);
 
     return NextResponse.json(
       {
@@ -426,7 +658,7 @@ export async function POST(req: Request) {
       },
       {
         status: 500,
-      }
+      },
     );
   }
 }

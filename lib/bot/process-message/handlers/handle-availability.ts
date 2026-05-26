@@ -9,32 +9,95 @@ import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-special
 import { findAvailableSlot } from "../../helpers/find-available-slot";
 
 import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots";
+
 import { resetConversationContext } from "../../helpers/reset-context";
+
 import { BotConversation } from "@/entities/BotConversation";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * FORMAT DATE STRING
+ * =========================================
+ *
+ * INPUT:
+ *
+ * yyyy-MM-dd-HH-mm
+ *
+ * OUTPUT:
+ *
+ * yyyy-MM-dd
+ * =========================================
+ */
+
+function extractDateFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return key.split("-").slice(0, 3).join("-");
+}
+
+/**
+ * =========================================
+ * EXTRACT HOUR
+ * =========================================
+ */
+
+function extractHourFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return Number(key.split("-")[3]);
+}
 
 /**
  * =========================================
  * HANDLE AVAILABILITY
  * =========================================
  *
- * Improved:
- * - voice friendly replies
- * - avoids undefined access
- * - conversational responses
- * - supports:
- *   - doctor availability
- *   - specialization availability
- *   - general availability
+ * Updated:
+ * - string datetime support
+ * - frontend JS dates
+ * - no Date DB comparisons
+ * - appointment key architecture
  * =========================================
  */
 
 export async function handleAvailability({
   conversation,
+
   context,
 
   channel,
 }: {
   conversation: BotConversation;
+
   context: Record<string, any>;
 
   channel: string;
@@ -42,7 +105,7 @@ export async function handleAvailability({
   try {
     /**
      * =====================================
-     * ENSURE DB CONNECTION
+     * DB INIT
      * =====================================
      */
 
@@ -84,7 +147,7 @@ export async function handleAvailability({
     let doctor: any = null;
 
     /**
-     * DIRECT DOCTOR ID
+     * DIRECT DOCTOR
      */
 
     if (context.doctor_id) {
@@ -96,7 +159,7 @@ export async function handleAvailability({
     }
 
     /**
-     * SPECIALIZATION SEARCH
+     * SPECIALIZATION
      */
 
     if (!doctor && context.specialization) {
@@ -121,6 +184,11 @@ export async function handleAvailability({
       const slot = await findAvailableSlot({
         doctor_id: doctor.id,
 
+        /**
+         * STILL PASS DATE
+         * TO HELPER
+         */
+
         appointment_date: new Date(context.appointment_date),
 
         time_period: context.time_period,
@@ -129,17 +197,47 @@ export async function handleAvailability({
       });
 
       /**
+       * ===================================
        * SLOT FOUND
+       * ===================================
        */
 
       if (slot) {
         /**
-         * VOICE RESPONSE
+         * FRONTEND DATES
+         */
+
+        const startDate = appointmentKeyToDate(slot.start_time);
+
+        const endDate = appointmentKeyToDate(slot.end_time);
+
+        /**
+         * DEBUG
+         */
+
+        console.log("AVAILABLE SLOT FOUND", {
+          slot_id: slot.id,
+
+          start_time: slot.start_time,
+
+          end_time: slot.end_time,
+        });
+
+        /**
+         * VOICE
          */
 
         if (channel === "VOICE") {
           return {
             success: true,
+
+            slot: {
+              ...slot,
+
+              start_date: startDate,
+
+              end_date: endDate,
+            },
 
             reply: `${slot.doctor?.full_name || "The doctor"} is available on ${
               slot.formatted?.date || "that date"
@@ -150,11 +248,23 @@ export async function handleAvailability({
         }
 
         /**
-         * WEB RESPONSE
+         * WEB
          */
 
         return {
           success: true,
+
+          slot: {
+            ...slot,
+
+            /**
+             * FRONTEND DATES
+             */
+
+            start_date: startDate,
+
+            end_date: endDate,
+          },
 
           reply: `${slot.doctor?.full_name || "Doctor"} is available.
 
@@ -172,9 +282,9 @@ ${slot.formatted?.end_time || "N/A"}`,
       }
 
       /**
-       * =================================
+       * ===================================
        * ALTERNATIVES
-       * =================================
+       * ===================================
        */
 
       const alternatives = await suggestAlternativeSlots({
@@ -182,7 +292,9 @@ ${slot.formatted?.end_time || "N/A"}`,
       });
 
       /**
+       * ===================================
        * NO ALTERNATIVES
+       * ===================================
        */
 
       if (!alternatives || !alternatives.length) {
@@ -201,25 +313,41 @@ ${slot.formatted?.end_time || "N/A"}`,
       }
 
       /**
-       * =================================
+       * ===================================
+       * TRANSFORM ALTERNATIVES
+       * ===================================
+       */
+
+      const transformedAlternatives = alternatives.map((item: any) => ({
+        ...item,
+
+        start_date: appointmentKeyToDate(item.start_time),
+
+        end_date: appointmentKeyToDate(item.end_time),
+      }));
+
+      /**
+       * ===================================
        * VOICE ALTERNATIVES
-       * =================================
+       * ===================================
        */
 
       if (channel === "VOICE") {
-        const voiceAlternatives = alternatives
+        const voiceAlternatives = transformedAlternatives
           .slice(0, 3)
-          .map((item) => {
-            const start = new Date(item.start_time);
+          .map((item: any) => {
+            const start = item.start_date;
 
-            const end = new Date(item.end_time);
+            const end = item.end_date;
 
-            return `On ${start.toLocaleDateString()} from ${start.toLocaleTimeString()} to ${end.toLocaleTimeString()}`;
+            return `On ${start?.toLocaleDateString()} from ${start?.toLocaleTimeString()} to ${end?.toLocaleTimeString()}`;
           })
           .join(". ");
 
         return {
           success: false,
+
+          alternatives: transformedAlternatives,
 
           reply: `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
             doctor.last_name || ""
@@ -232,29 +360,31 @@ ${voiceAlternatives}.`,
       }
 
       /**
-       * =================================
+       * ===================================
        * WEB ALTERNATIVES
-       * =================================
+       * ===================================
        */
 
-      const altText = alternatives
-        .map((item) => {
-          const start = new Date(item.start_time);
+      const altText = transformedAlternatives
+        .map((item: any) => {
+          const start = item.start_date;
 
-          const end = new Date(item.end_time);
+          const end = item.end_date;
 
-          return `• ${start.toLocaleDateString()}
+          return `• ${start?.toLocaleDateString()}
 
 Start:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 End:
-${end.toLocaleTimeString()}`;
+${end?.toLocaleTimeString()}`;
         })
         .join("\n\n");
 
       return {
         success: false,
+
+        alternatives: transformedAlternatives,
 
         reply: `${doctor.title || "Dr"} ${doctor.first_name || ""} ${
           doctor.last_name || ""
@@ -267,7 +397,7 @@ ${altText}`,
 
     /**
      * =====================================
-     * GENERAL AVAILABILITY FLOW
+     * GENERAL AVAILABILITY
      * =====================================
      */
 
@@ -278,7 +408,9 @@ ${altText}`,
     });
 
     /**
+     * =====================================
      * NO SLOTS
+     * =====================================
      */
 
     if (!slots.length) {
@@ -291,26 +423,17 @@ ${altText}`,
 
     /**
      * =====================================
-     * DATE RANGE
+     * FILTER DATE
+     * =====================================
+     *
+     * appointment_date:
+     *
+     * yyyy-MM-dd
      * =====================================
      */
 
-    const startOfDay = new Date(context.appointment_date);
-
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(context.appointment_date);
-
-    endOfDay.setHours(23, 59, 59, 999);
-
-    /**
-     * FILTER DATE
-     */
-
     let filteredSlots = slots.filter((slot) => {
-      const start = new Date(slot.start_time);
-
-      return start >= startOfDay && start <= endOfDay;
+      return extractDateFromKey(slot.start_time) === context.appointment_date;
     });
 
     /**
@@ -321,7 +444,11 @@ ${altText}`,
 
     if (context.time_period) {
       filteredSlots = filteredSlots.filter((slot) => {
-        const hour = new Date(slot.start_time).getHours();
+        const hour = extractHourFromKey(slot.start_time);
+
+        if (hour === null) {
+          return false;
+        }
 
         if (context.time_period === "morning" && hour >= 6 && hour < 12) {
           return true;
@@ -344,32 +471,47 @@ ${altText}`,
     }
 
     /**
-     * NO MATCHES
+     * =====================================
+     * NO MATCH
+     * =====================================
      */
 
     if (!filteredSlots.length) {
       return {
         success: false,
 
-        reply:
-          channel === "VOICE"
-            ? "No doctors are currently available for that date and time."
-            : "No doctors are currently available for that date and time.",
+        reply: "No doctors are currently available for that date and time.",
       };
     }
 
     /**
      * =====================================
-     * UNIQUE DOCTOR IDS
+     * TRANSFORM SLOTS
+     * =====================================
+     */
+
+    const transformedSlots = filteredSlots.map((slot: any) => ({
+      ...slot,
+
+      start_date: appointmentKeyToDate(slot.start_time),
+
+      end_date: appointmentKeyToDate(slot.end_time),
+    }));
+
+    /**
+     * =====================================
+     * UNIQUE DOCTORS
      * =====================================
      */
 
     const uniqueDoctorIds = [
-      ...new Set(filteredSlots.map((slot) => slot.doctor_id)),
+      ...new Set(transformedSlots.map((slot) => slot.doctor_id)),
     ];
 
     /**
+     * =====================================
      * LOAD DOCTORS
+     * =====================================
      */
 
     const doctors = await Promise.all(
@@ -383,13 +525,17 @@ ${altText}`,
     );
 
     /**
-     * REMOVE NULLS
+     * =====================================
+     * VALID DOCTORS
+     * =====================================
      */
 
     const validDoctors = doctors.filter(Boolean) as Profile[];
 
     /**
+     * =====================================
      * NO VALID DOCTORS
+     * =====================================
      */
 
     if (!validDoctors.length) {
@@ -402,7 +548,7 @@ ${altText}`,
 
     /**
      * =====================================
-     * VOICE RESPONSE
+     * VOICE
      * =====================================
      */
 
@@ -417,14 +563,18 @@ ${altText}`,
         )
         .join(", ");
 
-      resetConversationContext(conversation);
+      await resetConversationContext(conversation);
 
       return {
         success: true,
 
-        reply: `The following doctors are available on ${new Date(
-          context.appointment_date,
-        ).toLocaleDateString()}.
+        doctors: validDoctors,
+
+        slots: transformedSlots,
+
+        reply: `The following doctors are available on ${
+          context.appointment_date
+        }.
 
 ${doctorText}.`,
       };
@@ -432,7 +582,7 @@ ${doctorText}.`,
 
     /**
      * =====================================
-     * WEB RESPONSE
+     * WEB
      * =====================================
      */
 
@@ -447,6 +597,10 @@ ${doctorText}.`,
     return {
       success: true,
 
+      doctors: validDoctors,
+
+      slots: transformedSlots,
+
       reply: `Available Doctors:
 
 ${doctorText}`,
@@ -454,7 +608,7 @@ ${doctorText}`,
   } catch (err) {
     /**
      * =====================================
-     * ERROR HANDLING
+     * ERROR
      * =====================================
      */
 

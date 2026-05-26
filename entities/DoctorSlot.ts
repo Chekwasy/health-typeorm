@@ -22,11 +22,11 @@ export class DoctorSlot {
   @Column()
   doctor_id!: string;
 
-  @Column({ type: "timestamptz" })
-  start_time!: Date;
+  @Column({ type: "text" })
+  start_time!: string;
 
-  @Column({ type: "timestamptz" })
-  end_time!: Date;
+  @Column({ type: "text" })
+  end_time!: string;
 
   @Column({ default: false })
   is_booked!: boolean;

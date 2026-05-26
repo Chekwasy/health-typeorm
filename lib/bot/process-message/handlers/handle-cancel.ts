@@ -7,24 +7,46 @@ import { cancelAppointment } from "../../helpers/cancel-appointment";
 import { findAppointmentForCancellation } from "../../helpers/find-appointment-for-cancel";
 
 import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-specialization";
+
 import { BotConversation } from "@/entities/BotConversation";
+
 import { resetConversationContext } from "../../helpers/reset-context";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
 
 /**
  * =========================================
  * HANDLE CANCEL APPOINTMENT
  * =========================================
  *
- * Improved flow:
- * - conversational cancellation
- * - voice optimized replies
- * - context-aware follow ups
- * - graceful fallback handling
- * - supports:
- *   - reference
- *   - doctor
- *   - date
- *   - time
+ * Updated:
+ * - string datetime support
+ * - frontend JS dates
+ * - slot key support
+ * - no DB Date usage
  * =========================================
  */
 
@@ -70,7 +92,9 @@ export async function handleCancel({
   const invalidReferences = ["cancel", "appointment", "booking", "doctor"];
 
   /**
+   * =====================================
    * CLEAN REFERENCE
+   * =====================================
    */
 
   let appointmentReference = context.appointment_reference;
@@ -84,7 +108,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * TRY DIRECT REFERENCE FIRST
+   * TRY DIRECT REFERENCE
    * =====================================
    */
 
@@ -97,14 +121,6 @@ export async function handleCancel({
        */
 
       if (result.success) {
-        if (channel === "VOICE") {
-          return {
-            success: true,
-
-            reply: "Your appointment has been cancelled successfully.",
-          };
-        }
-
         return {
           success: true,
 
@@ -113,7 +129,7 @@ export async function handleCancel({
       }
 
       /**
-       * FALL THROUGH
+       * FAILED
        */
 
       console.log("REFERENCE CANCELLATION FAILED", {
@@ -128,22 +144,13 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * VOICE FOLLOW-UP HANDLING
-   * =====================================
-   *
-   * Voice users should
-   * naturally provide:
-   * - date
-   * - time
-   *
-   * since references are
-   * hard to say verbally.
+   * VOICE FOLLOWUPS
    * =====================================
    */
 
   if (channel === "VOICE") {
     /**
-     * BOTH DATE + TIME MISSING
+     * BOTH MISSING
      */
 
     if (!context.appointment_date && !context.appointment_time) {
@@ -156,7 +163,7 @@ export async function handleCancel({
     }
 
     /**
-     * DATE ONLY MISSING
+     * DATE MISSING
      */
 
     if (!context.appointment_date) {
@@ -168,7 +175,7 @@ export async function handleCancel({
     }
 
     /**
-     * TIME ONLY MISSING
+     * TIME MISSING
      */
 
     if (!context.appointment_time && !context.time_period) {
@@ -182,7 +189,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * REQUIRE SOME CONTEXT
+   * REQUIRE CONTEXT
    * =====================================
    */
 
@@ -206,7 +213,7 @@ export async function handleCancel({
    * =====================================
    */
 
-  let doctor = null;
+  let doctor: any = null;
 
   /**
    * BY ID
@@ -230,7 +237,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * FIND MATCHING APPOINTMENTS
+   * FIND MATCHES
    * =====================================
    */
 
@@ -246,13 +253,27 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * NO MATCH FOUND
+   * DEBUG
+   * =====================================
+   */
+
+  console.log("CANCEL APPOINTMENT MATCHES", {
+    total_matches: matches.length,
+
+    appointment_date: context.appointment_date,
+
+    appointment_time: context.appointment_time,
+  });
+
+  /**
+   * =====================================
+   * NO MATCHES
    * =====================================
    */
 
   if (!matches.length) {
     /**
-     * VOICE FRIENDLY
+     * VOICE
      */
 
     if (channel === "VOICE") {
@@ -265,7 +286,7 @@ export async function handleCancel({
     }
 
     /**
-     * WEB/TEXT
+     * WEB
      */
 
     return {
@@ -290,10 +311,10 @@ export async function handleCancel({
           },
         });
 
-        const start = new Date(appointment.slot.start_time);
+        const start = appointmentKeyToDate(appointment.slot?.start_time);
 
         /**
-         * VOICE FORMAT
+         * VOICE
          */
 
         if (channel === "VOICE") {
@@ -301,11 +322,11 @@ export async function handleCancel({
             matchedDoctor?.title || "Dr"
           } ${matchedDoctor?.first_name} ${
             matchedDoctor?.last_name
-          } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
+          } on ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()}`;
         }
 
         /**
-         * WEB FORMAT
+         * WEB
          */
 
         return `${index + 1}. ${matchedDoctor?.title || "Dr"} ${
@@ -313,10 +334,10 @@ export async function handleCancel({
         } ${matchedDoctor?.last_name}
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reference:
 ${appointment.id}`;
@@ -324,7 +345,7 @@ ${appointment.id}`;
     );
 
     /**
-     * VOICE RESPONSE
+     * VOICE
      */
 
     if (channel === "VOICE") {
@@ -340,7 +361,7 @@ Please mention the appointment date and time you want to cancel.`,
     }
 
     /**
-     * WEB RESPONSE
+     * WEB
      */
 
     return {
@@ -356,20 +377,24 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * SINGLE MATCH FOUND
+   * SINGLE MATCH
    * =====================================
    */
 
   const appointment = matches[0];
 
   /**
-   * CANCEL APPOINTMENT
+   * =====================================
+   * CANCEL
+   * =====================================
    */
 
   const result = await cancelAppointment(appointment.id, user_id);
 
   /**
+   * =====================================
    * FAILURE
+   * =====================================
    */
 
   if (!result.success) {
@@ -382,7 +407,7 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * GET DOCTOR
+   * LOAD DOCTOR
    * =====================================
    */
 
@@ -393,12 +418,34 @@ ${options.join("\n\n")}`,
   });
 
   /**
-   * SLOT DATE
+   * =====================================
+   * FRONTEND DATE
+   * =====================================
    */
 
-  const start = new Date(appointment.slot.start_time);
+  const start = appointmentKeyToDate(appointment.slot?.start_time);
 
-  resetConversationContext(conversation);
+  /**
+   * =====================================
+   * DEBUG
+   * =====================================
+   */
+
+  console.log("CANCEL SUCCESS", {
+    appointment_id: appointment.id,
+
+    slot_id: appointment.slot_id,
+
+    slot_time: appointment.slot?.start_time,
+  });
+
+  /**
+   * =====================================
+   * RESET CONTEXT
+   * =====================================
+   */
+
+  await resetConversationContext(conversation);
 
   /**
    * =====================================
@@ -410,11 +457,19 @@ ${options.join("\n\n")}`,
     return {
       success: true,
 
+      appointment,
+
+      slot: {
+        ...appointment.slot,
+
+        start_date: start,
+      },
+
       reply: `Your appointment with ${matchedDoctor?.title || "Dr"} ${
         matchedDoctor?.first_name
       } ${
         matchedDoctor?.last_name
-      } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()} has been cancelled successfully.`,
+      } on ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()} has been cancelled successfully.`,
     };
   }
 
@@ -427,6 +482,14 @@ ${options.join("\n\n")}`,
   return {
     success: true,
 
+    appointment,
+
+    slot: {
+      ...appointment.slot,
+
+      start_date: start,
+    },
+
     reply: `Your appointment has been cancelled successfully.
 
 Doctor:
@@ -435,10 +498,10 @@ ${matchedDoctor?.title || "Dr"} ${matchedDoctor?.first_name} ${
     }
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reference:
 ${appointment.id}`,
