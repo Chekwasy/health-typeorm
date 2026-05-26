@@ -7,24 +7,87 @@ import { cancelAppointment } from "../../helpers/cancel-appointment";
 import { findAppointmentForCancellation } from "../../helpers/find-appointment-for-cancel";
 
 import { findDoctorBySpecialization } from "../../helpers/find-doctor-by-specialization";
+
 import { BotConversation } from "@/entities/BotConversation";
+
 import { resetConversationContext } from "../../helpers/reset-context";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * NORMALIZE DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-27T10:41:02.177Z
+ *
+ * ->
+ *
+ * 2026-05-27
+ * =========================================
+ */
+
+function normalizeAppointmentDate(value?: string | Date | null) {
+  if (!value) {
+    return null;
+  }
+
+  /**
+   * DATE OBJECT
+   */
+
+  if (value instanceof Date) {
+    return value.toISOString().split("T")[0];
+  }
+
+  /**
+   * ISO STRING
+   */
+
+  if (typeof value === "string") {
+    return value.split("T")[0];
+  }
+
+  return null;
+}
 
 /**
  * =========================================
  * HANDLE CANCEL APPOINTMENT
  * =========================================
  *
- * Improved flow:
- * - conversational cancellation
- * - voice optimized replies
- * - context-aware follow ups
- * - graceful fallback handling
- * - supports:
- *   - reference
- *   - doctor
- *   - date
- *   - time
+ * Updated:
+ * - uses ONLY appointment_date
+ * - uses ONLY appointment_time
+ * - supports time_period fallback
+ * - supports DB string datetime
+ * - frontend JS dates
+ * - no JS Date DB comparison
  * =========================================
  */
 
@@ -70,7 +133,9 @@ export async function handleCancel({
   const invalidReferences = ["cancel", "appointment", "booking", "doctor"];
 
   /**
+   * =====================================
    * CLEAN REFERENCE
+   * =====================================
    */
 
   let appointmentReference = context.appointment_reference;
@@ -84,7 +149,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * TRY DIRECT REFERENCE FIRST
+   * TRY DIRECT REFERENCE
    * =====================================
    */
 
@@ -97,13 +162,7 @@ export async function handleCancel({
        */
 
       if (result.success) {
-        if (channel === "VOICE") {
-          return {
-            success: true,
-
-            reply: "Your appointment has been cancelled successfully.",
-          };
-        }
+        await resetConversationContext(conversation);
 
         return {
           success: true,
@@ -113,7 +172,7 @@ export async function handleCancel({
       }
 
       /**
-       * FALL THROUGH
+       * FAILED
        */
 
       console.log("REFERENCE CANCELLATION FAILED", {
@@ -128,25 +187,38 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * VOICE FOLLOW-UP HANDLING
+   * NORMALIZE DATE
    * =====================================
-   *
-   * Voice users should
-   * naturally provide:
-   * - date
-   * - time
-   *
-   * since references are
-   * hard to say verbally.
+   */
+
+  const normalizedAppointmentDate = normalizeAppointmentDate(
+    context.appointment_date,
+  );
+
+  /**
+   * =====================================
+   * DEBUG DATE
+   * =====================================
+   */
+
+  console.log("NORMALIZED CANCEL DATE", {
+    raw: context.appointment_date,
+
+    normalizedAppointmentDate,
+  });
+
+  /**
+   * =====================================
+   * VOICE FOLLOWUPS
    * =====================================
    */
 
   if (channel === "VOICE") {
     /**
-     * BOTH DATE + TIME MISSING
+     * DATE + TIME MISSING
      */
 
-    if (!context.appointment_date && !context.appointment_time) {
+    if (!normalizedAppointmentDate && !context.appointment_time) {
       return {
         success: false,
 
@@ -156,10 +228,10 @@ export async function handleCancel({
     }
 
     /**
-     * DATE ONLY MISSING
+     * DATE MISSING
      */
 
-    if (!context.appointment_date) {
+    if (!normalizedAppointmentDate) {
       return {
         success: false,
 
@@ -168,7 +240,7 @@ export async function handleCancel({
     }
 
     /**
-     * TIME ONLY MISSING
+     * TIME MISSING
      */
 
     if (!context.appointment_time && !context.time_period) {
@@ -182,7 +254,7 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * REQUIRE SOME CONTEXT
+   * REQUIRE CONTEXT
    * =====================================
    */
 
@@ -190,7 +262,7 @@ export async function handleCancel({
     !context.doctor_id &&
     !context.doctor_name &&
     !context.specialization &&
-    !context.appointment_date
+    !normalizedAppointmentDate
   ) {
     return {
       success: false,
@@ -206,7 +278,7 @@ export async function handleCancel({
    * =====================================
    */
 
-  let doctor = null;
+  let doctor: any = null;
 
   /**
    * BY ID
@@ -230,31 +302,107 @@ export async function handleCancel({
 
   /**
    * =====================================
-   * FIND MATCHING APPOINTMENTS
+   * FIND MATCHES
    * =====================================
    */
 
-  const matches = await findAppointmentForCancellation({
+  let matches = await findAppointmentForCancellation({
     patient_id: user_id,
 
     doctor_id: doctor?.id,
 
-    appointment_date: context.appointment_date,
+    appointment_date: normalizedAppointmentDate,
 
     appointment_time: context.appointment_time,
   });
 
   /**
    * =====================================
-   * NO MATCH FOUND
+   * FILTER BY TIME PERIOD
+   * =====================================
+   *
+   * Used ONLY when:
+   *
+   * - appointment_time missing
+   * - time_period exists
+   * =====================================
+   */
+
+  if (!context.appointment_time && context.time_period) {
+    matches = matches.filter((appointment) => {
+      const key = appointment.slot?.start_time;
+
+      if (!key) {
+        return false;
+      }
+
+      /**
+       * 2026-05-26-14-30
+       */
+
+      const parts = key.split("-");
+
+      const hour = Number(parts[3]);
+
+      /**
+       * MORNING
+       */
+
+      if (context.time_period === "morning") {
+        return hour >= 6 && hour < 12;
+      }
+
+      /**
+       * AFTERNOON
+       */
+
+      if (context.time_period === "afternoon") {
+        return hour >= 12 && hour < 17;
+      }
+
+      /**
+       * EVENING
+       */
+
+      if (context.time_period === "evening") {
+        return hour >= 17 && hour < 22;
+      }
+
+      return true;
+    });
+  }
+
+  /**
+   * =====================================
+   * DEBUG
+   * =====================================
+   */
+
+  console.log("CANCEL APPOINTMENT MATCHES", {
+    total_matches: matches.length,
+
+    appointment_date: normalizedAppointmentDate,
+
+    appointment_time: context.appointment_time,
+
+    time_period: context.time_period,
+
+    matches: matches.map((m) => ({
+      id: m.id,
+
+      slot_id: m.slot_id,
+
+      slot_time: m.slot?.start_time,
+    })),
+  });
+
+  /**
+   * =====================================
+   * NO MATCHES
    * =====================================
    */
 
   if (!matches.length) {
-    /**
-     * VOICE FRIENDLY
-     */
-
     if (channel === "VOICE") {
       return {
         success: false,
@@ -263,10 +411,6 @@ export async function handleCancel({
           "I could not find a matching appointment. Please mention the doctor, appointment date and time again.",
       };
     }
-
-    /**
-     * WEB/TEXT
-     */
 
     return {
       success: false,
@@ -290,10 +434,10 @@ export async function handleCancel({
           },
         });
 
-        const start = new Date(appointment.slot.start_time);
+        const start = appointmentKeyToDate(appointment.slot?.start_time);
 
         /**
-         * VOICE FORMAT
+         * VOICE
          */
 
         if (channel === "VOICE") {
@@ -301,11 +445,11 @@ export async function handleCancel({
             matchedDoctor?.title || "Dr"
           } ${matchedDoctor?.first_name} ${
             matchedDoctor?.last_name
-          } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
+          } on ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()}`;
         }
 
         /**
-         * WEB FORMAT
+         * WEB
          */
 
         return `${index + 1}. ${matchedDoctor?.title || "Dr"} ${
@@ -313,10 +457,10 @@ export async function handleCancel({
         } ${matchedDoctor?.last_name}
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reference:
 ${appointment.id}`;
@@ -324,7 +468,7 @@ ${appointment.id}`;
     );
 
     /**
-     * VOICE RESPONSE
+     * VOICE
      */
 
     if (channel === "VOICE") {
@@ -340,7 +484,7 @@ Please mention the appointment date and time you want to cancel.`,
     }
 
     /**
-     * WEB RESPONSE
+     * WEB
      */
 
     return {
@@ -356,20 +500,24 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * SINGLE MATCH FOUND
+   * SINGLE MATCH
    * =====================================
    */
 
   const appointment = matches[0];
 
   /**
-   * CANCEL APPOINTMENT
+   * =====================================
+   * CANCEL
+   * =====================================
    */
 
   const result = await cancelAppointment(appointment.id, user_id);
 
   /**
+   * =====================================
    * FAILURE
+   * =====================================
    */
 
   if (!result.success) {
@@ -382,7 +530,7 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * GET DOCTOR
+   * LOAD DOCTOR
    * =====================================
    */
 
@@ -393,12 +541,34 @@ ${options.join("\n\n")}`,
   });
 
   /**
-   * SLOT DATE
+   * =====================================
+   * FRONTEND DATE
+   * =====================================
    */
 
-  const start = new Date(appointment.slot.start_time);
+  const start = appointmentKeyToDate(appointment.slot?.start_time);
 
-  resetConversationContext(conversation);
+  /**
+   * =====================================
+   * DEBUG
+   * =====================================
+   */
+
+  console.log("CANCEL SUCCESS", {
+    appointment_id: appointment.id,
+
+    slot_id: appointment.slot_id,
+
+    slot_time: appointment.slot?.start_time,
+  });
+
+  /**
+   * =====================================
+   * RESET CONTEXT
+   * =====================================
+   */
+
+  await resetConversationContext(conversation);
 
   /**
    * =====================================
@@ -410,11 +580,19 @@ ${options.join("\n\n")}`,
     return {
       success: true,
 
+      appointment,
+
+      slot: {
+        ...appointment.slot,
+
+        start_date: start,
+      },
+
       reply: `Your appointment with ${matchedDoctor?.title || "Dr"} ${
         matchedDoctor?.first_name
       } ${
         matchedDoctor?.last_name
-      } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()} has been cancelled successfully.`,
+      } on ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()} has been cancelled successfully.`,
     };
   }
 
@@ -427,6 +605,14 @@ ${options.join("\n\n")}`,
   return {
     success: true,
 
+    appointment,
+
+    slot: {
+      ...appointment.slot,
+
+      start_date: start,
+    },
+
     reply: `Your appointment has been cancelled successfully.
 
 Doctor:
@@ -435,10 +621,10 @@ ${matchedDoctor?.title || "Dr"} ${matchedDoctor?.first_name} ${
     }
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reference:
 ${appointment.id}`,

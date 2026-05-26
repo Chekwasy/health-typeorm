@@ -2,20 +2,91 @@ import dbClient from "@/lib/db";
 
 import { Appointment } from "@/entities/Appointment";
 
+import { DoctorSlot } from "@/entities/DoctorSlot";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * EXTRACT DATE FROM KEY
+ * =========================================
+ *
+ * INPUT:
+ *
+ * 2026-05-26-14-30
+ *
+ * OUTPUT:
+ *
+ * 2026-05-26
+ * =========================================
+ */
+
+function extractDateFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return key.split("-").slice(0, 3).join("-");
+}
+
+/**
+ * =========================================
+ * EXTRACT TIME FROM KEY
+ * =========================================
+ *
+ * INPUT:
+ *
+ * 2026-05-26-14-30
+ *
+ * OUTPUT:
+ *
+ * 14:30
+ * =========================================
+ */
+
+function extractTimeFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  return `${parts[3]}:${parts[4]}`;
+}
+
 /**
  * =========================================
  * FIND APPOINTMENT FOR CANCELLATION
  * =========================================
  *
- * This allows users to cancel
- * appointments conversationally.
- *
- * Examples:
- * - Cancel Dr Richard appointment today
- * - Cancel my 5pm appointment
- * - Cancel tomorrow booking
- *
- * Instead of forcing UUID usage.
+ * Updated:
+ * - string datetime support
+ * - no DB JS Date comparison
+ * - frontend JS dates
+ * - manual slot loading
  * =========================================
  */
 
@@ -32,10 +103,16 @@ export async function findAppointmentForCancellation({
 
   doctor_id?: string | null;
 
-  appointment_date?: Date | null;
+  appointment_date?: string | null;
 
   appointment_time?: string | null;
 }) {
+  /**
+   * =====================================
+   * DB INIT
+   * =====================================
+   */
+
   await dbClient.init();
 
   /**
@@ -46,38 +123,130 @@ export async function findAppointmentForCancellation({
 
   const appointmentRepo = dbClient.client.getRepository(Appointment);
 
+  const slotRepo = dbClient.client.getRepository(DoctorSlot);
+
   /**
    * =====================================
-   * GET ACTIVE APPOINTMENTS
+   * TODAY KEY
+   * =====================================
+   *
+   * yyyy-MM-dd
    * =====================================
    */
 
-  const appointments = await appointmentRepo.find({
+  const now = new Date();
+
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(now.getDate()).padStart(2, "0")}`;
+
+  /**
+   * =====================================
+   * GET APPOINTMENTS
+   * =====================================
+   */
+
+  let appointments = await appointmentRepo.find({
     where: {
       patient_id,
     },
-
-    relations: ["slot"],
   });
 
   /**
    * =====================================
-   * ACTIVE FUTURE BOOKINGS ONLY
+   * EMPTY
    * =====================================
    */
 
-  let filtered = appointments.filter((appointment) => {
-    const future = new Date(appointment.slot.start_time) > new Date();
+  if (!appointments.length) {
+    console.log("NO APPOINTMENTS FOUND");
+
+    return [];
+  }
+
+  /**
+   * =====================================
+   * LOAD SLOT IDS
+   * =====================================
+   */
+
+  const slotIds = appointments
+    .map((appointment) => appointment.slot_id)
+    .filter(Boolean);
+
+  /**
+   * =====================================
+   * LOAD SLOTS
+   * =====================================
+   */
+
+  const slots = await slotRepo.find({
+    where: slotIds.map((id) => ({
+      id,
+    })),
+  });
+
+  /**
+   * =====================================
+   * ATTACH SLOT
+   * =====================================
+   */
+
+  const enrichedAppointments = appointments
+    .map((appointment) => {
+      const slot = slots.find((s) => s.id === appointment.slot_id);
+
+      /**
+       * INVALID SLOT
+       */
+
+      if (!slot) {
+        return null;
+      }
+
+      return {
+        ...appointment,
+
+        slot,
+      };
+    })
+    .filter(Boolean) as (Appointment & {
+    slot: DoctorSlot;
+  })[];
+
+  /**
+   * =====================================
+   * ACTIVE FUTURE BOOKINGS
+   * =====================================
+   */
+
+  let filtered = enrichedAppointments.filter((appointment) => {
+    /**
+     * ACTIVE STATUS
+     */
 
     const active =
       appointment.status === "PENDING" || appointment.status === "CONFIRMED";
 
-    return future && active;
+    /**
+     * SLOT DATE
+     */
+
+    const slotDate = extractDateFromKey(appointment.slot.start_time);
+
+    /**
+     * FUTURE ONLY
+     */
+
+    const future = slotDate! >= todayKey;
+
+    return active && future;
   });
 
   /**
    * =====================================
-   * FILTER BY DOCTOR
+   * FILTER DOCTOR
    * =====================================
    */
 
@@ -89,39 +258,37 @@ export async function findAppointmentForCancellation({
 
   /**
    * =====================================
-   * FILTER BY DATE
+   * FILTER DATE
+   * =====================================
+   *
+   * appointment_date:
+   *
+   * yyyy-MM-dd
    * =====================================
    */
 
   if (appointment_date) {
-    const targetDate = new Date(appointment_date);
-
     filtered = filtered.filter((appointment) => {
-      const slotDate = new Date(appointment.slot.start_time);
+      const slotDate = extractDateFromKey(appointment.slot.start_time);
 
-      return (
-        slotDate.getFullYear() === targetDate.getFullYear() &&
-        slotDate.getMonth() === targetDate.getMonth() &&
-        slotDate.getDate() === targetDate.getDate()
-      );
+      return slotDate === appointment_date;
     });
   }
 
   /**
    * =====================================
-   * FILTER BY EXACT TIME
+   * FILTER EXACT TIME
+   * =====================================
+   *
+   * appointment_time:
+   *
+   * HH:mm
    * =====================================
    */
 
   if (appointment_time) {
     filtered = filtered.filter((appointment) => {
-      const slotDate = new Date(appointment.slot.start_time);
-
-      const hour = String(slotDate.getHours()).padStart(2, "0");
-
-      const minutes = String(slotDate.getMinutes()).padStart(2, "0");
-
-      const slotTime = `${hour}:${minutes}`;
+      const slotTime = extractTimeFromKey(appointment.slot.start_time);
 
       return slotTime === appointment_time;
     });
@@ -129,23 +296,19 @@ export async function findAppointmentForCancellation({
 
   /**
    * =====================================
-   * SORT EARLIEST FIRST
+   * SORT EARLIEST
    * =====================================
    */
 
-  filtered.sort(
-    (a, b) =>
-      new Date(a.slot.start_time).getTime() -
-      new Date(b.slot.start_time).getTime(),
-  );
+  filtered.sort((a, b) => a.slot.start_time.localeCompare(b.slot.start_time));
 
   /**
    * =====================================
-   * LOGGING
+   * DEBUG
    * =====================================
    */
 
-  console.log("CANCELLATION SEARCH:", {
+  console.log("CANCELLATION SEARCH", {
     patient_id,
 
     doctor_id,
@@ -154,12 +317,24 @@ export async function findAppointmentForCancellation({
 
     appointment_time,
 
+    total_appointments: appointments.length,
+
+    total_slots: slots.length,
+
     matches: filtered.length,
+
+    matched_slots: filtered.map((appointment) => ({
+      appointment_id: appointment.id,
+
+      slot_id: appointment.slot_id,
+
+      start_time: appointment.slot.start_time,
+    })),
   });
 
   /**
    * =====================================
-   * RETURN RESULTS
+   * RETURN
    * =====================================
    */
 

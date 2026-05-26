@@ -11,19 +11,44 @@ import { hasReachedBookingLimit } from "../../helpers/has-reached-booking-limit"
 import { isPastDate } from "../../helpers/helpers";
 
 import { suggestAlternativeSlots } from "../../helpers/suggest-alternative-slots";
+
 import { resetConversationContext } from "../../helpers/reset-context";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
 
 /**
  * =========================================
  * HANDLE BOOK APPOINTMENT
  * =========================================
  *
- * Improved:
- * - voice friendly responses
- * - text friendly responses
- * - conversational followups
- * - safer fallback handling
- * - alternative slot suggestions
+ * Updated:
+ * - string datetime support
+ * - frontend JS dates
+ * - no DB Date comparison
+ * - slot key architecture
  * =========================================
  */
 
@@ -95,7 +120,7 @@ export async function handleBook({
   let doctor: any = context.doctor_name || null;
 
   /**
-   * SPECIALIZATION SEARCH
+   * SPECIALIZATION
    */
 
   if (!doctor && context.specialization) {
@@ -219,9 +244,9 @@ export async function handleBook({
 
     const altText = alternatives
       .map((item) => {
-        const start = new Date(item.start_time);
+        const start = appointmentKeyToDate(item.start_time);
 
-        return `• ${start.toLocaleDateString()} ${start.toLocaleTimeString()}`;
+        return `• ${start?.toLocaleDateString()} ${start?.toLocaleTimeString()}`;
       })
       .join("\n");
 
@@ -235,9 +260,9 @@ export async function handleBook({
       const voiceAlternatives = alternatives
         .slice(0, 3)
         .map((item) => {
-          const start = new Date(item.start_time);
+          const start = appointmentKeyToDate(item.start_time);
 
-          return `on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
+          return `on ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()}`;
         })
         .join(". ");
 
@@ -291,7 +316,7 @@ ${altText}`,
 
   /**
    * =====================================
-   * BOOKING FAILED
+   * FAILED
    * =====================================
    */
 
@@ -313,13 +338,33 @@ ${altText}`,
 
   /**
    * =====================================
-   * SLOT DATE
+   * RESET CONTEXT
    * =====================================
    */
 
-  const start = new Date(slot.start_time);
+  await resetConversationContext(conversation);
 
-  resetConversationContext(conversation);
+  /**
+   * =====================================
+   * FRONTEND DATE
+   * =====================================
+   */
+
+  const start = appointmentKeyToDate(slot.start_time);
+
+  /**
+   * =====================================
+   * DEBUG
+   * =====================================
+   */
+
+  console.log("BOOK APPOINTMENT SUCCESS", {
+    appointment_id: booking.appointment?.id,
+
+    slot_id: slot.slot_id,
+
+    start_time: slot.start_time,
+  });
 
   /**
    * =====================================
@@ -331,11 +376,19 @@ ${altText}`,
     return {
       success: true,
 
+      appointment: booking.appointment,
+
+      slot: {
+        ...slot,
+
+        start_date: start,
+      },
+
       reply: `Your appointment has been booked successfully with ${
         context.doctor_title || "Dr"
       } ${context.doctor_name || ""}.
 
-The appointment is scheduled for ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}.
+The appointment is scheduled for ${start?.toLocaleDateString()} at ${start?.toLocaleTimeString()}.
 
 Reason for visit: ${context.reason || "general consultation"}.`,
     };
@@ -350,16 +403,24 @@ Reason for visit: ${context.reason || "general consultation"}.`,
   return {
     success: true,
 
+    appointment: booking.appointment,
+
+    slot: {
+      ...slot,
+
+      start_date: start,
+    },
+
     reply: `Appointment booked successfully 🎉
 
 Doctor:
 ${context.doctor_title || "Dr"} ${context.doctor_name}
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reason:
 ${context.reason || "General consultation"}

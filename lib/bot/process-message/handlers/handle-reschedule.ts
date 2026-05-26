@@ -16,28 +16,75 @@ import { BotConversation } from "@/entities/BotConversation";
 
 import { resetConversationContext } from "../../helpers/reset-context";
 
+import { In } from "typeorm";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * EXTRACT DATE FROM KEY
+ * =========================================
+ */
+
+function extractDateFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return key.split("-").slice(0, 3).join("-");
+}
+
+/**
+ * =========================================
+ * EXTRACT TIME FROM KEY
+ * =========================================
+ */
+
+function extractTimeFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  return `${parts[3]}:${parts[4]}`;
+}
+
+/**
+ * =========================================
+ * GET TIME PERIOD
+ * =========================================
+ */
+
+function getTimePeriod(hour: number) {
+  if (hour < 12) {
+    return "morning";
+  }
+
+  if (hour >= 12 && hour < 17) {
+    return "afternoon";
+  }
+
+  return "evening";
+}
+
 /**
  * =========================================
  * HANDLE RESCHEDULE APPOINTMENT
- * =========================================
- *
- * Supports:
- * - move my appointment to friday morning
- * - move my appointment from wednesday to friday
- * - reschedule 7pm appointment to 9pm
- * - move dermatologist appointment to tomorrow evening
- *
- * Context Supported:
- * - appointment_reference
- * - doctor_id
- * - doctor_name
- * - specialization
- * - from_date
- * - to_date
- * - from_appointment_time
- * - to_appointment_time
- * - from_time_period
- * - to_time_period
  * =========================================
  */
 
@@ -104,6 +151,22 @@ export async function handleReschedule({
 
   /**
    * =====================================
+   * REQUIRE FROM DATE
+   * =====================================
+   */
+
+  if (!context.from_date) {
+    return {
+      success: false,
+
+      reply: isVoice
+        ? "What appointment date would you like to move your appointment from?"
+        : "What date would you like to reschedule the appointment from?",
+    };
+  }
+
+  /**
+   * =====================================
    * REQUIRE TARGET TIME
    * =====================================
    */
@@ -126,10 +189,6 @@ export async function handleReschedule({
 
   let doctor: any = null;
 
-  /**
-   * DIRECT ID
-   */
-
   if (context.doctor_id) {
     doctor = await profileRepo.findOne({
       where: {
@@ -139,7 +198,9 @@ export async function handleReschedule({
   }
 
   /**
-   * SPECIALIZATION
+   * =====================================
+   * SPECIALIZATION FALLBACK
+   * =====================================
    */
 
   if (!doctor && context.specialization) {
@@ -148,7 +209,7 @@ export async function handleReschedule({
 
   /**
    * =====================================
-   * FIND ACTIVE APPOINTMENTS
+   * FIND PATIENT APPOINTMENTS
    * =====================================
    */
 
@@ -156,23 +217,115 @@ export async function handleReschedule({
     where: {
       patient_id: user_id,
     },
-
-    relations: ["slot"],
   });
 
   /**
    * =====================================
-   * ACTIVE ONLY
+   * LOAD SLOT IDS
    * =====================================
    */
 
-  appointments = appointments.filter((appointment) => {
-    const activeStatuses = ["CONFIRMED", "PENDING"];
+  const slotIds = appointments
+    .map((appointment) => appointment.slot_id)
+    .filter(Boolean);
 
-    return (
-      activeStatuses.includes(appointment.status) &&
-      new Date(appointment.slot.start_time) > new Date()
-    );
+  /**
+   * =====================================
+   * LOAD SLOTS
+   * =====================================
+   */
+
+  const slots = await slotRepo.find({
+    where: {
+      id: In(slotIds),
+    },
+  });
+
+  /**
+   * =====================================
+   * SLOT MAP
+   * =====================================
+   */
+
+  const slotMap = new Map(slots.map((slot) => [slot.id, slot]));
+
+  /**
+   * =====================================
+   * ATTACH SLOT
+   * =====================================
+   */
+
+  const enrichedAppointments = appointments
+    .map((appointment) => {
+      const slot = slotMap.get(appointment.slot_id);
+
+      if (!slot) {
+        return null;
+      }
+
+      return {
+        ...appointment,
+
+        slot,
+      };
+    })
+    .filter(Boolean) as (Appointment & {
+    slot: DoctorSlot;
+  })[];
+
+  /**
+   * =====================================
+   * DEBUG
+   * =====================================
+   */
+
+  console.log(
+    "APPOINTMENTS WITH SLOTS",
+    enrichedAppointments.map((appointment) => ({
+      appointment_id: appointment.id,
+
+      slot_id: appointment.slot_id,
+
+      doctor_id: appointment.doctor_id,
+
+      status: appointment.status,
+
+      reason: appointment.reason,
+
+      slot_start: appointment.slot?.start_time,
+
+      slot_end: appointment.slot?.end_time,
+    })),
+  );
+
+  /**
+   * =====================================
+   * TODAY KEY
+   * =====================================
+   */
+
+  const now = new Date();
+
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(now.getDate()).padStart(2, "0")}`;
+
+  /**
+   * =====================================
+   * FILTER ACTIVE + FUTURE
+   * =====================================
+   */
+
+  let filteredAppointments = enrichedAppointments.filter((appointment) => {
+    const active =
+      appointment.status === "CONFIRMED" || appointment.status === "PENDING";
+
+    const slotDate = extractDateFromKey(appointment.slot.start_time);
+
+    const future = slotDate! >= todayKey;
+
+    return active && future;
   });
 
   /**
@@ -182,7 +335,7 @@ export async function handleReschedule({
    */
 
   if (doctor?.id) {
-    appointments = appointments.filter(
+    filteredAppointments = filteredAppointments.filter(
       (appointment) => appointment.doctor_id === doctor.id,
     );
   }
@@ -193,83 +346,63 @@ export async function handleReschedule({
    * =====================================
    */
 
-  if (context.from_date) {
-    const startOfDay = new Date(context.from_date);
+  filteredAppointments = filteredAppointments.filter((appointment) => {
+    const slotDate = extractDateFromKey(appointment.slot.start_time);
 
-    startOfDay.setHours(0, 0, 0, 0);
+    return slotDate === context.from_date;
+  });
 
-    const endOfDay = new Date(context.from_date);
+  console.log(
+    "AFTER DATE FILTER",
+    filteredAppointments.map((appointment) => ({
+      appointment_id: appointment.id,
 
-    endOfDay.setHours(23, 59, 59, 999);
-
-    appointments = appointments.filter((appointment) => {
-      const start = new Date(appointment.slot.start_time);
-
-      return start >= startOfDay && start <= endOfDay;
-    });
-  }
+      slot_start: appointment.slot?.start_time,
+    })),
+  );
 
   /**
    * =====================================
-   * FILTER BY FROM TIME
+   * FILTER BY TIME
    * =====================================
    */
 
   if (context.from_appointment_time) {
-    appointments = appointments.filter((appointment) => {
-      const start = new Date(appointment.slot.start_time);
+    filteredAppointments = filteredAppointments.filter((appointment) => {
+      const slotTime = extractTimeFromKey(appointment.slot.start_time);
 
-      const time = `${String(start.getHours()).padStart(2, "0")}:${String(
-        start.getMinutes(),
-      ).padStart(2, "0")}`;
+      return slotTime === context.from_appointment_time;
+    });
+  } else if (context.from_time_period) {
+    filteredAppointments = filteredAppointments.filter((appointment) => {
+      const start = appointmentKeyToDate(appointment.slot.start_time);
 
-      return time === context.from_appointment_time;
+      const period = getTimePeriod(start!.getHours());
+
+      return period === context.from_time_period;
     });
   }
 
-  /**
-   * =====================================
-   * FILTER BY FROM PERIOD
-   * =====================================
-   */
+  console.log(
+    "AFTER TIME FILTER",
+    filteredAppointments.map((appointment) => ({
+      appointment_id: appointment.id,
 
-  if (context.from_time_period && !context.from_appointment_time) {
-    appointments = appointments.filter((appointment) => {
-      const hour = new Date(appointment.slot.start_time).getHours();
-
-      if (context.from_time_period === "morning" && hour >= 6 && hour < 12) {
-        return true;
-      }
-
-      if (context.from_time_period === "afternoon" && hour >= 12 && hour < 17) {
-        return true;
-      }
-
-      if (context.from_time_period === "evening" && hour >= 17 && hour < 22) {
-        return true;
-      }
-
-      if (context.from_time_period === "night" && (hour >= 22 || hour < 6)) {
-        return true;
-      }
-
-      return false;
-    });
-  }
+      slot_start: appointment.slot?.start_time,
+    })),
+  );
 
   /**
    * =====================================
-   * NO MATCH FOUND
+   * NO MATCH
    * =====================================
    */
 
-  if (!appointments.length) {
+  if (!filteredAppointments.length) {
     return {
       success: false,
 
-      reply: isVoice
-        ? "I could not find the appointment you want to reschedule. Please mention the current appointment date and time."
-        : "I could not find the appointment you want to reschedule.",
+      reply: "I could not find the appointment you want to reschedule.",
     };
   }
 
@@ -279,34 +412,26 @@ export async function handleReschedule({
    * =====================================
    */
 
-  if (appointments.length > 1) {
+  if (filteredAppointments.length > 1) {
     const options = await Promise.all(
-      appointments.map(async (appointment, index) => {
+      filteredAppointments.map(async (appointment, index) => {
         const matchedDoctor = await profileRepo.findOne({
           where: {
             id: appointment.doctor_id,
           },
         });
 
-        const start = new Date(appointment.slot.start_time);
-
-        if (isVoice) {
-          return `Appointment ${index + 1} with ${
-            matchedDoctor?.title || "Dr"
-          } ${matchedDoctor?.first_name} ${
-            matchedDoctor?.last_name
-          } on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
-        }
+        const start = appointmentKeyToDate(appointment.slot.start_time);
 
         return `${index + 1}. ${matchedDoctor?.title || "Dr"} ${
           matchedDoctor?.first_name
         } ${matchedDoctor?.last_name}
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 Reference:
 ${appointment.id}`;
@@ -316,11 +441,7 @@ ${appointment.id}`;
     return {
       success: false,
 
-      reply: isVoice
-        ? `I found multiple appointments. ${options.join(
-            ". ",
-          )}. Please mention the current appointment date and time you want to move.`
-        : `I found multiple appointments matching your request:
+      reply: `I found multiple appointments matching your request:
 
 ${options.join("\n\n")}`,
     };
@@ -332,7 +453,27 @@ ${options.join("\n\n")}`,
    * =====================================
    */
 
-  const appointment = appointments[0];
+  const appointment = filteredAppointments[0];
+
+  console.log("TARGET APPOINTMENT", {
+    appointment_id: appointment.id,
+
+    slot_id: appointment.slot_id,
+
+    reason: appointment.reason,
+
+    slot_start: appointment.slot?.start_time,
+  });
+
+  /**
+   * =====================================
+   * BUILD TARGET DATE
+   * =====================================
+   */
+
+  const [year, month, day] = context.to_date.split("-").map(Number);
+
+  const appointmentDate = new Date(year, month - 1, day);
 
   /**
    * =====================================
@@ -343,12 +484,14 @@ ${options.join("\n\n")}`,
   const slot = await findAvailableSlot({
     doctor_id: appointment.doctor_id,
 
-    appointment_date: new Date(context.to_date),
+    appointment_date: appointmentDate,
 
     appointment_time: context.to_appointment_time,
 
     time_period: context.to_time_period,
   });
+
+  console.log("FOUND TARGET SLOT", slot);
 
   /**
    * =====================================
@@ -361,50 +504,19 @@ ${options.join("\n\n")}`,
       doctor_id: appointment.doctor_id,
     });
 
-    /**
-     * NO ALTERNATIVES
-     */
-
     if (!alternatives.length) {
       return {
         success: false,
 
-        reply: isVoice
-          ? "There are no available slots for the requested reschedule time."
-          : "No available slots were found for the requested time.",
+        reply: "No available slots were found for the requested time.",
       };
     }
-
-    /**
-     * VOICE FORMAT
-     */
-
-    if (isVoice) {
-      const voiceAlternatives = alternatives
-        .slice(0, 3)
-        .map((item) => {
-          const start = new Date(item.start_time);
-
-          return `on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}`;
-        })
-        .join(". ");
-
-      return {
-        success: false,
-
-        reply: `The requested slot is unavailable. Available alternatives include ${voiceAlternatives}.`,
-      };
-    }
-
-    /**
-     * TEXT FORMAT
-     */
 
     const altText = alternatives
-      .map((item) => {
-        const start = new Date(item.start_time);
+      .map((item: any) => {
+        const start = appointmentKeyToDate(item.start_time);
 
-        return `• ${start.toLocaleDateString()} ${start.toLocaleTimeString()}`;
+        return `• ${start?.toLocaleDateString()} ${start?.toLocaleTimeString()}`;
       })
       .join("\n");
 
@@ -421,18 +533,143 @@ ${altText}`,
 
   /**
    * =====================================
+   * VERIFY SLOT EXISTS
+   * =====================================
+   */
+
+  const freshSlot = await slotRepo.findOne({
+    where: {
+      id: slot.slot_id,
+    },
+  });
+
+  if (!freshSlot) {
+    return {
+      success: false,
+
+      reply: "The selected slot no longer exists.",
+    };
+  }
+
+  /**
+   * =====================================
+   * SLOT ALREADY BOOKED
+   * =====================================
+   */
+
+  if (freshSlot.is_booked) {
+    return {
+      success: false,
+
+      reply: "That slot is no longer available.",
+    };
+  }
+
+  /**
+   * =====================================
+   * PATIENT CONFLICT CHECK
+   * =====================================
+   */
+
+  const patientConflict = enrichedAppointments.find((item) => {
+    if (item.status !== "CONFIRMED" && item.status !== "PENDING") {
+      return false;
+    }
+
+    return (
+      item.slot.start_time === freshSlot.start_time &&
+      item.id !== appointment.id
+    );
+  });
+
+  if (patientConflict) {
+    return {
+      success: false,
+
+      reply: "You already have another appointment at that time.",
+    };
+  }
+
+  /**
+   * =====================================
+   * STORE OLD VALUES
+   * =====================================
+   */
+
+  const oldSlotId = appointment.slot_id;
+
+  const oldStatus = appointment.status;
+
+  /**
+   * =====================================
+   * CANCEL OLD APPOINTMENT
+   * =====================================
+   */
+
+  const cancelledAppointment = await appointmentRepo.update(
+    {
+      id: appointment.id,
+
+      patient_id: user_id,
+    },
+    {
+      status: "CANCELLED_BY_PATIENT",
+    },
+  );
+
+  console.log("CANCEL RESULT", {
+    affected: cancelledAppointment.affected,
+  });
+
+  if (!cancelledAppointment.affected) {
+    return {
+      success: false,
+
+      reply: "Failed to cancel previous appointment.",
+    };
+  }
+
+  /**
+   * =====================================
    * RELEASE OLD SLOT
    * =====================================
    */
 
-  await slotRepo.update(
+  const releasedSlot = await slotRepo.update(
     {
-      id: appointment.slot_id,
+      id: oldSlotId,
     },
     {
       is_booked: false,
     },
   );
+
+  console.log("RELEASE SLOT RESULT", {
+    oldSlotId,
+
+    affected: releasedSlot.affected,
+  });
+
+  if (!releasedSlot.affected) {
+    /**
+     * RESTORE APPOINTMENT
+     */
+
+    await appointmentRepo.update(
+      {
+        id: appointment.id,
+      },
+      {
+        status: oldStatus,
+      },
+    );
+
+    return {
+      success: false,
+
+      reply: "Failed to release previous slot.",
+    };
+  }
 
   /**
    * =====================================
@@ -440,28 +677,147 @@ ${altText}`,
    * =====================================
    */
 
-  await slotRepo.update(
+  const bookedSlot = await slotRepo.update(
     {
-      id: slot.slot_id,
+      id: freshSlot.id,
+
+      is_booked: false,
     },
     {
       is_booked: true,
     },
   );
 
+  console.log("BOOK SLOT RESULT", {
+    slot_id: freshSlot.id,
+
+    affected: bookedSlot.affected,
+  });
+
   /**
    * =====================================
-   * UPDATE APPOINTMENT
+   * FAILED BOOKING
    * =====================================
    */
 
-  appointment.slot_id = slot.slot_id;
+  if (!bookedSlot.affected) {
+    /**
+     * ROLLBACK
+     */
 
-  await appointmentRepo.save(appointment);
+    await slotRepo.update(
+      {
+        id: oldSlotId,
+      },
+      {
+        is_booked: true,
+      },
+    );
+
+    await appointmentRepo.update(
+      {
+        id: appointment.id,
+      },
+      {
+        status: oldStatus,
+      },
+    );
+
+    return {
+      success: false,
+
+      reply: "That slot is no longer available.",
+    };
+  }
 
   /**
    * =====================================
-   * GET DOCTOR
+   * CREATE NEW APPOINTMENT
+   * =====================================
+   */
+
+  const newAppointment = appointmentRepo.create({
+    patient_id: appointment.patient_id,
+
+    doctor_id: appointment.doctor_id,
+
+    slot_id: freshSlot.id,
+
+    reason: appointment.reason || context.reason || "General consultation",
+
+    status: "CONFIRMED",
+  });
+
+  /**
+   * =====================================
+   * SAVE NEW APPOINTMENT
+   * =====================================
+   */
+
+  let savedAppointment: Appointment | null = null;
+
+  try {
+    savedAppointment = await appointmentRepo.save(newAppointment);
+
+    console.log("NEW APPOINTMENT CREATED", {
+      appointment_id: savedAppointment?.id,
+
+      slot_id: savedAppointment?.slot_id,
+
+      reason: savedAppointment?.reason,
+    });
+  } catch (err) {
+    /**
+     * ROLLBACK NEW SLOT
+     */
+
+    await slotRepo.update(
+      {
+        id: freshSlot.id,
+      },
+      {
+        is_booked: false,
+      },
+    );
+
+    /**
+     * RESTORE OLD SLOT
+     */
+
+    await slotRepo.update(
+      {
+        id: oldSlotId,
+      },
+      {
+        is_booked: true,
+      },
+    );
+
+    /**
+     * RESTORE OLD APPOINTMENT
+     */
+
+    await appointmentRepo.update(
+      {
+        id: appointment.id,
+      },
+      {
+        status: oldStatus,
+      },
+    );
+
+    console.error("FAILED TO CREATE APPOINTMENT", err);
+
+    return {
+      success: false,
+
+      reply: "Failed to create rescheduled appointment.",
+    };
+  }
+
+  /**
+   * =====================================
+   * LOAD DOCTOR
    * =====================================
    */
 
@@ -473,32 +829,40 @@ ${altText}`,
 
   /**
    * =====================================
-   * SUCCESS
+   * RESET CONTEXT
    * =====================================
    */
 
-  const start = new Date(slot.start_time);
-
-  resetConversationContext(conversation);
+  await resetConversationContext(conversation);
 
   /**
-   * VOICE
+   * =====================================
+   * SUCCESS LOGGING
+   * =====================================
    */
 
-  if (isVoice) {
-    return {
-      success: true,
+  console.log("RESCHEDULE SUCCESS", {
+    cancelled_appointment_id: appointment.id,
 
-      reply: `Your appointment has been rescheduled successfully with ${
-        matchedDoctor?.title || "Dr"
-      } ${matchedDoctor?.first_name} ${matchedDoctor?.last_name}.
+    released_old_slot: oldSlotId,
 
-Your new appointment is on ${start.toLocaleDateString()} at ${start.toLocaleTimeString()}.`,
-    };
-  }
+    booked_new_slot: freshSlot.id,
+
+    new_appointment_id: savedAppointment?.id,
+  });
 
   /**
-   * TEXT
+   * =====================================
+   * FRONTEND DATE
+   * =====================================
+   */
+
+  const start = appointmentKeyToDate(freshSlot.start_time);
+
+  /**
+   * =====================================
+   * RESPONSE
+   * =====================================
    */
 
   return {
@@ -506,18 +870,30 @@ Your new appointment is on ${start.toLocaleDateString()} at ${start.toLocaleTime
 
     reply: `Appointment rescheduled successfully 🎉
 
+Previous appointment cancelled:
+✅ Success
+
+Previous slot released:
+✅ Success
+
+New slot booked:
+✅ Success
+
+New appointment created:
+✅ Success
+
 Doctor:
-${matchedDoctor?.title || "Dr"} ${matchedDoctor?.first_name} ${
-      matchedDoctor?.last_name
-    }
+${matchedDoctor?.title || "Dr"} ${
+      matchedDoctor?.first_name
+    } ${matchedDoctor?.last_name}
 
 New Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 New Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
-Reference:
-${appointment.id}`,
+New Reference:
+${savedAppointment?.id}`,
   };
 }

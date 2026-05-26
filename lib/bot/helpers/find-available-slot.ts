@@ -6,20 +6,104 @@ import { Profile } from "@/entities/Profile";
 
 /**
  * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-26-14-30
+ *
+ * ->
+ *
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * EXTRACT DATE FROM KEY
+ * =========================================
+ *
+ * INPUT:
+ *
+ * 2026-05-26-14-30
+ *
+ * OUTPUT:
+ *
+ * 2026-05-26
+ * =========================================
+ */
+
+function extractDateFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return key.split("-").slice(0, 3).join("-");
+}
+
+/**
+ * =========================================
+ * EXTRACT TIME FROM KEY
+ * =========================================
+ *
+ * INPUT:
+ *
+ * 2026-05-26-14-30
+ *
+ * OUTPUT:
+ *
+ * 14:30
+ * =========================================
+ */
+
+function extractTimeFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  return `${parts[3]}:${parts[4]}`;
+}
+
+/**
+ * =========================================
+ * EXTRACT HOUR FROM KEY
+ * =========================================
+ */
+
+function extractHourFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return Number(key.split("-")[3]);
+}
+
+/**
+ * =========================================
  * FIND AVAILABLE SLOT
  * =========================================
  *
- * Purpose:
- * - find best matching slot
- * - support:
+ * Updated:
+ * - uses string datetime
+ * - no JS Date DB comparison
+ * - frontend ready dates
+ * - supports:
  *   - exact time
+ *   - nearest time
  *   - time period
- *   - nearest time fallback
- * - return enriched slot data
- * - include:
- *   - doctor details
- *   - slot details
- *   - formatted metadata
  * =========================================
  */
 
@@ -65,7 +149,7 @@ export async function findAvailableSlot({
 
     /**
      * =====================================
-     * ENSURE DB CONNECTION
+     * DB INIT
      * =====================================
      */
 
@@ -95,6 +179,7 @@ export async function findAvailableSlot({
 
     /**
      * INVALID DOCTOR
+     * =====================================
      */
 
     if (!doctor) {
@@ -107,17 +192,16 @@ export async function findAvailableSlot({
 
     /**
      * =====================================
-     * BUILD DAY RANGE
+     * BUILD DATE KEY
+     * =====================================
+     *
+     * yyyy-MM-dd
      * =====================================
      */
 
-    const startOfDay = new Date(appointment_date);
-
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(appointment_date);
-
-    endOfDay.setHours(23, 59, 59, 999);
+    const targetDate = `${appointment_date.getFullYear()}-${String(
+      appointment_date.getMonth() + 1,
+    ).padStart(2, "0")}-${String(appointment_date.getDate()).padStart(2, "0")}`;
 
     /**
      * =====================================
@@ -134,7 +218,9 @@ export async function findAvailableSlot({
     });
 
     /**
+     * =====================================
      * NO SLOTS
+     * =====================================
      */
 
     if (!slots.length) {
@@ -150,13 +236,29 @@ export async function findAvailableSlot({
      */
 
     const sameDaySlots = slots.filter((slot) => {
-      const start = new Date(slot.start_time);
-
-      return start >= startOfDay && start <= endOfDay;
+      return extractDateFromKey(slot.start_time) === targetDate;
     });
 
     /**
+     * =====================================
+     * DEBUG
+     * =====================================
+     */
+
+    console.log("SAME DAY SLOT SEARCH", {
+      doctor_id,
+
+      targetDate,
+
+      total_slots: slots.length,
+
+      same_day_slots: sameDaySlots.length,
+    });
+
+    /**
+     * =====================================
      * NO SAME DAY SLOT
+     * =====================================
      */
 
     if (!sameDaySlots.length) {
@@ -167,7 +269,7 @@ export async function findAvailableSlot({
 
     /**
      * =====================================
-     * START FILTERING
+     * FILTERING
      * =====================================
      */
 
@@ -181,13 +283,13 @@ export async function findAvailableSlot({
 
     if (appointment_time) {
       /**
-       * VALID TIME FORMAT
+       * VALIDATE HH:mm
        */
 
       const validTime = /^([01]?\d|2[0-3]):([0-5]\d)$/.test(appointment_time);
 
       /**
-       * INVALID TIME
+       * INVALID
        */
 
       if (!validTime) {
@@ -195,33 +297,31 @@ export async function findAvailableSlot({
           appointment_time,
         });
       } else {
-        /**
-         * EXACT MATCH
-         */
 
+      /**
+       * EXACT MATCH
+       */
         const exactMatches = sameDaySlots.filter((slot) => {
-          const slotDate = new Date(slot.start_time);
-
-          const hour = String(slotDate.getHours()).padStart(2, "0");
-
-          const minute = String(slotDate.getMinutes()).padStart(2, "0");
-
-          const slotTime = `${hour}:${minute}`;
-
-          return slotTime === appointment_time;
+          return extractTimeFromKey(slot.start_time) === appointment_time;
         });
 
         /**
-         * FOUND EXACT MATCH
+         * FOUND EXACT
          */
 
         if (exactMatches.length) {
           filteredSlots = exactMatches;
+
+          console.log("EXACT SLOT MATCH FOUND", {
+            appointment_time,
+
+            matches: exactMatches.length,
+          });
         } else {
 
         /**
          * =================================
-         * NEAREST TIME FALLBACK
+         * NEAREST FALLBACK
          * =================================
          */
           const [requestedHour, requestedMinute] = appointment_time
@@ -235,13 +335,21 @@ export async function findAvailableSlot({
            */
 
           filteredSlots = sameDaySlots.sort((a, b) => {
-            const aDate = new Date(a.start_time);
+            const aTime = extractTimeFromKey(a.start_time);
 
-            const bDate = new Date(b.start_time);
+            const bTime = extractTimeFromKey(b.start_time);
 
-            const aTotal = aDate.getHours() * 60 + aDate.getMinutes();
+            if (!aTime || !bTime) {
+              return 0;
+            }
 
-            const bTotal = bDate.getHours() * 60 + bDate.getMinutes();
+            const [aHour, aMinute] = aTime.split(":").map(Number);
+
+            const [bHour, bMinute] = bTime.split(":").map(Number);
+
+            const aTotal = aHour * 60 + aMinute;
+
+            const bTotal = bHour * 60 + bMinute;
 
             return (
               Math.abs(aTotal - requestedTotal) -
@@ -250,10 +358,16 @@ export async function findAvailableSlot({
           });
 
           /**
-           * LIMIT CLOSEST
+           * TOP 3
            */
 
           filteredSlots = filteredSlots.slice(0, 3);
+
+          console.log("NEAREST SLOT MATCH USED", {
+            appointment_time,
+
+            nearest: filteredSlots.map((slot) => slot.start_time),
+          });
         }
       }
     }
@@ -266,7 +380,11 @@ export async function findAvailableSlot({
 
     if (time_period && !appointment_time) {
       filteredSlots = sameDaySlots.filter((slot) => {
-        const hour = new Date(slot.start_time).getHours();
+        const hour = extractHourFromKey(slot.start_time);
+
+        if (hour === null) {
+          return false;
+        }
 
         /**
          * MORNING
@@ -302,6 +420,12 @@ export async function findAvailableSlot({
 
         return false;
       });
+
+      console.log("TIME PERIOD FILTER", {
+        time_period,
+
+        matches: filteredSlots.length,
+      });
     }
 
     /**
@@ -310,18 +434,20 @@ export async function findAvailableSlot({
      * =====================================
      */
 
-    filteredSlots.sort(
-      (a, b) =>
-        new Date(a.start_time).getTime() - new Date(b.start_time).getTime(),
-    );
+    filteredSlots.sort((a, b) => a.start_time.localeCompare(b.start_time));
 
     /**
      * =====================================
-     * NO MATCH
+     * BEST SLOT
      * =====================================
      */
 
     const bestSlot = filteredSlots[0];
+
+    /**
+     * NO SLOT
+     * =====================================
+     */
 
     if (!bestSlot) {
       console.log("NO FILTERED SLOT FOUND");
@@ -331,17 +457,17 @@ export async function findAvailableSlot({
 
     /**
      * =====================================
-     * FORMAT SLOT DATA
+     * FRONTEND DATES
      * =====================================
      */
 
-    const start = new Date(bestSlot.start_time);
+    const startDate = appointmentKeyToDate(bestSlot.start_time);
 
-    const end = new Date(bestSlot.end_time);
+    const endDate = appointmentKeyToDate(bestSlot.end_time);
 
     /**
      * =====================================
-     * BUILD RESPONSE OBJECT
+     * RESPONSE
      * =====================================
      */
 
@@ -350,6 +476,8 @@ export async function findAvailableSlot({
        * SLOT
        */
 
+      id: bestSlot.id,
+
       slot_id: bestSlot.id,
 
       doctor_id: doctor.id,
@@ -357,7 +485,7 @@ export async function findAvailableSlot({
       is_booked: bestSlot.is_booked,
 
       /**
-       * DOCTOR DETAILS
+       * DOCTOR
        */
 
       doctor: {
@@ -375,13 +503,7 @@ export async function findAvailableSlot({
       },
 
       /**
-       * DATE
-       */
-
-      appointment_date: start,
-
-      /**
-       * SLOT TIME
+       * RAW DB VALUES
        */
 
       start_time: bestSlot.start_time,
@@ -389,17 +511,25 @@ export async function findAvailableSlot({
       end_time: bestSlot.end_time,
 
       /**
+       * FRONTEND DATES
+       */
+
+      start_date: startDate,
+
+      end_date: endDate,
+
+      /**
        * FORMATTED
        */
 
       formatted: {
-        date: start.toLocaleDateString(),
+        date: startDate?.toLocaleDateString(),
 
-        start_time: start.toLocaleTimeString(),
+        start_time: startDate?.toLocaleTimeString(),
 
-        end_time: end.toLocaleTimeString(),
+        end_time: endDate?.toLocaleTimeString(),
 
-        full: `${start.toLocaleDateString()} ${start.toLocaleTimeString()}`,
+        full: `${startDate?.toLocaleDateString()} ${startDate?.toLocaleTimeString()}`,
       },
 
       /**
@@ -419,11 +549,19 @@ export async function findAvailableSlot({
      * =====================================
      */
 
-    console.log("AVAILABLE SLOT FOUND", result);
+    console.log("AVAILABLE SLOT FOUND", {
+      slot_id: result.slot_id,
+
+      start_time: result.start_time,
+
+      end_time: result.end_time,
+
+      matched_by: result.matched_by,
+    });
 
     /**
      * =====================================
-     * RETURN ENRICHED RESULT
+     * RETURN
      * =====================================
      */
 
@@ -431,7 +569,7 @@ export async function findAvailableSlot({
   } catch (err) {
     /**
      * =====================================
-     * ERROR HANDLING
+     * ERROR
      * =====================================
      */
 

@@ -3,29 +3,103 @@ import dbClient from "@/lib/db";
 import { Profile } from "@/entities/Profile";
 
 import { Appointment } from "@/entities/Appointment";
+
 import { BotConversation } from "@/entities/BotConversation";
+
 import { resetConversationContext } from "../../helpers/reset-context";
+
+import { DoctorSlot } from "@/entities/DoctorSlot";
+
+/**
+ * =========================================
+ * CONVERT KEY TO DATE
+ * =========================================
+ *
+ * 2026-05-26-14-30
+ * ->
+ * JS Date
+ * =========================================
+ */
+
+function appointmentKeyToDate(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const [year, month, day, hour, minute] = key.split("-").map(Number);
+
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
+/**
+ * =========================================
+ * EXTRACT DATE
+ * =========================================
+ *
+ * 2026-05-26-14-30
+ * ->
+ * 2026-05-26
+ * =========================================
+ */
+
+function extractDateFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  return key.split("-").slice(0, 3).join("-");
+}
+
+/**
+ * =========================================
+ * EXTRACT TIME
+ * =========================================
+ *
+ * 2026-05-26-14-30
+ * ->
+ * 14:30
+ * =========================================
+ */
+
+function extractTimeFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  return `${parts[3]}:${parts[4]}`;
+}
+
+/**
+ * =========================================
+ * GET TIME PERIOD
+ * =========================================
+ */
+
+function getTimePeriod(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  const hour = Number(parts[3]);
+
+  if (hour < 12) {
+    return "morning";
+  }
+
+  if (hour < 17) {
+    return "afternoon";
+  }
+
+  return "evening";
+}
 
 /**
  * =========================================
  * HANDLE VIEW APPOINTMENTS
- * =========================================
- *
- * Features:
- * - uses conversational context
- * - supports:
- *   - specific date
- *   - doctor
- * - smart fallback ranges
- * - shows:
- *   - doctor
- *   - reason
- *   - start/end time
- *   - status
- *   - reference
- * - only shows:
- *   - CONFIRMED
- *   - PENDING
  * =========================================
  */
 
@@ -48,7 +122,7 @@ export async function handleView({
 }) {
   /**
    * =====================================
-   * ENSURE DB CONNECTION
+   * DB
    * =====================================
    */
 
@@ -64,67 +138,48 @@ export async function handleView({
 
   const profileRepo = dbClient.client.getRepository(Profile);
 
+  const slotRepo = dbClient.client.getRepository(DoctorSlot);
+
   /**
    * =====================================
-   * CURRENT DATE
+   * TIME ONLY REQUIRES DATE
+   * =====================================
+   */
+
+  if (context.appointment_time && !context.appointment_date) {
+    return {
+      success: false,
+
+      reply:
+        channel === "VOICE"
+          ? "Please mention the appointment date together with the time."
+          : "Please provide the appointment date for that time.",
+    };
+  }
+
+  /**
+   * =====================================
+   * TODAY KEY
    * =====================================
    */
 
   const now = new Date();
 
-  /**
-   * =====================================
-   * BUILD DATE RANGE
-   * =====================================
-   *
-   * Priority:
-   * 1. Context date
-   * 2. End of week
-   * 3. All future appointments
-   * =====================================
-   */
-
-  let endDate: Date | null = null;
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}-${String(now.getDate()).padStart(2, "0")}`;
 
   /**
    * =====================================
-   * CONTEXT DATE
+   * LOAD APPOINTMENTS
    * =====================================
    */
 
-  if (context.appointment_date) {
-    endDate = new Date(context.appointment_date);
-
-    endDate.setHours(23, 59, 59, 999);
-  } else {
-    /**
-     * =====================================
-     * FALLBACK END OF WEEK
-     * =====================================
-     */
-    endDate = new Date();
-
-    const currentDay = endDate.getDay();
-
-    const remainingDays = 7 - currentDay;
-
-    endDate.setDate(endDate.getDate() + remainingDays);
-
-    endDate.setHours(23, 59, 59, 999);
-  }
-
-  /**
-   * =====================================
-   * FETCH APPOINTMENTS
-   * =====================================
-   */
-
-  let appointments = await appointmentRepo.find({
+  const rawAppointments = await appointmentRepo.find({
     where: {
       patient_id: user_id,
     },
-
-    relations: ["slot"],
 
     order: {
       created_at: "ASC",
@@ -133,152 +188,204 @@ export async function handleView({
 
   /**
    * =====================================
-   * FILTER APPOINTMENTS
+   * EMPTY
    * =====================================
    */
 
-  appointments = appointments.filter((appointment) => {
+  if (!rawAppointments.length) {
+    await resetConversationContext(conversation);
+
+    return {
+      success: true,
+
+      reply:
+        channel === "VOICE"
+          ? "You currently do not have any appointments."
+          : "You currently have no appointments.",
+    };
+  }
+
+  /**
+   * =====================================
+   * SLOT IDS
+   * =====================================
+   */
+
+  const slotIds = rawAppointments
+    .map((appointment) => appointment.slot_id)
+    .filter(Boolean);
+
+  /**
+   * =====================================
+   * LOAD SLOTS
+   * =====================================
+   */
+
+  const slots = await slotRepo.find({
+    where: slotIds.map((id) => ({
+      id,
+    })),
+  });
+
+  /**
+   * =====================================
+   * ENRICH APPOINTMENTS
+   * =====================================
+   */
+
+  const appointments = rawAppointments
+    .map((appointment) => {
+      const slot = slots.find((s) => s.id === appointment.slot_id);
+
+      if (!slot) {
+        return null;
+      }
+
+      return {
+        ...appointment,
+
+        slot,
+      };
+    })
+    .filter(Boolean) as (Appointment & {
+    slot: DoctorSlot;
+  })[];
+
+  /**
+   * =====================================
+   * FILTER
+   * =====================================
+   */
+
+  let filtered = appointments.filter((appointment) => {
     /**
-     * INVALID SLOT
+     * ACTIVE ONLY
      */
 
-    if (!appointment.slot) {
+    const activeStatuses = ["CONFIRMED", "PENDING"];
+
+    const status = String(appointment.status).toUpperCase();
+
+    if (!activeStatuses.includes(status)) {
       return false;
     }
 
     /**
-     * SLOT START
+     * SLOT DATE
      */
 
-    const start = new Date(appointment.slot.start_time);
+    const slotDate = extractDateFromKey(appointment.slot.start_time);
 
     /**
      * FUTURE ONLY
      */
 
-    if (start < now) {
+    if (slotDate! < todayKey) {
       return false;
     }
 
     /**
-     * =================================
-     * ALLOWED STATUSES
-     * =================================
+     * FILTER:
+     * DOCTOR
      */
 
-    const allowedStatuses = ["CONFIRMED", "PENDING"];
-
-    /**
-     * NORMALIZE STATUS
-     */
-
-    const normalizedStatus = String(appointment.status).toUpperCase();
-
-    /**
-     * INVALID STATUS
-     */
-
-    if (!allowedStatuses.includes(normalizedStatus)) {
+    if (context.doctor_id && appointment.doctor_id !== context.doctor_id) {
       return false;
     }
 
     /**
-     * RANGE FILTER
+     * FILTER:
+     * DATE
      */
 
-    return start >= now && start <= endDate!;
+    /**
+     * =====================================
+     * NORMALIZE CONTEXT DATE
+     * =====================================
+     */
+
+    let targetDate: string | null = null;
+
+    if (context.appointment_date) {
+      /**
+       * JS DATE
+       */
+
+      if (context.appointment_date instanceof Date) {
+        targetDate = context.appointment_date.toISOString().split("T")[0];
+      } else if (typeof context.appointment_date === "string") {
+
+      /**
+       * ISO STRING
+       */
+        targetDate = context.appointment_date.split("T")[0];
+      }
+    }
+
+    /**
+     * =====================================
+     * FILTER BY DATE
+     * =====================================
+     */
+
+    if (targetDate && slotDate !== targetDate) {
+      return false;
+    }
+
+    /**
+     * FILTER:
+     * EXACT TIME
+     */
+
+    if (context.appointment_time) {
+      const slotTime = extractTimeFromKey(appointment.slot.start_time);
+
+      if (slotTime !== context.appointment_time) {
+        return false;
+      }
+    }
+
+    /**
+     * FILTER:
+     * TIME PERIOD
+     */
+
+    if (!context.appointment_time && context.time_period) {
+      const period = getTimePeriod(appointment.slot.start_time);
+
+      if (period !== context.time_period) {
+        return false;
+      }
+    }
+
+    return true;
   });
 
   /**
    * =====================================
-   * FILTER BY DOCTOR
+   * SORT
    * =====================================
    */
 
-  if (context.doctor_id) {
-    appointments = appointments.filter(
-      (appointment) => appointment.doctor_id === context.doctor_id,
-    );
-  }
+  filtered.sort((a, b) => a.slot.start_time.localeCompare(b.slot.start_time));
 
   /**
    * =====================================
-   * NO APPOINTMENTS IN RANGE
-   * =====================================
-   *
-   * FALLBACK:
-   * Fetch all future appointments
+   * EMPTY AFTER FILTER
    * =====================================
    */
 
-  if (!appointments.length) {
-    appointments = await appointmentRepo.find({
-      where: {
-        patient_id: user_id,
-      },
+  if (!filtered.length) {
+    await resetConversationContext(conversation);
 
-      relations: ["slot"],
+    return {
+      success: true,
 
-      order: {
-        created_at: "ASC",
-      },
-    });
-
-    /**
-     * FILTER AGAIN
-     */
-
-    appointments = appointments.filter((appointment) => {
-      /**
-       * INVALID SLOT
-       */
-
-      if (!appointment.slot) {
-        return false;
-      }
-
-      /**
-       * SLOT START
-       */
-
-      const start = new Date(appointment.slot.start_time);
-
-      /**
-       * STATUS
-       */
-
-      const normalizedStatus = String(appointment.status).toUpperCase();
-
-      /**
-       * ALLOWED
-       */
-
-      const allowedStatuses = ["CONFIRMED", "PENDING"];
-
-      return start >= now && allowedStatuses.includes(normalizedStatus);
-    });
-  }
-
-  /**
-   * =====================================
-   * STILL EMPTY
-   * =====================================
-   */
-
-  if (!appointments.length) {
-    if (channel !== "VOICE") {
-      resetConversationContext(conversation);
-      return {
-        success: true,
-        reply: "You currently have no upcoming appointments.",
-      };
-    } else {
-      resetConversationContext(conversation);
-      return {
-        success: true,
-        reply: "You currently do not have any upcoming appointments.",
-      };
-    }
+      reply:
+        channel === "VOICE"
+          ? "No appointments matched your request."
+          : "No appointments matched your request.",
+    };
   }
 
   /**
@@ -288,9 +395,9 @@ export async function handleView({
    */
 
   const lines = await Promise.all(
-    appointments.map(async (appointment, index) => {
+    filtered.map(async (appointment, index) => {
       /**
-       * FIND DOCTOR
+       * DOCTOR
        */
 
       const doctor = await profileRepo.findOne({
@@ -300,25 +407,22 @@ export async function handleView({
       });
 
       /**
-       * SLOT TIMES
+       * DATES
        */
 
-      const start = new Date(appointment.slot.start_time);
+      const start = appointmentKeyToDate(appointment.slot.start_time);
 
-      const end = new Date(appointment.slot.end_time);
+      const end = appointmentKeyToDate(appointment.slot.end_time);
 
       /**
-       * DOCTOR NAME
+       * NAME
        */
 
-      const doctorName = `${doctor?.title || "Dr"} ${
-        doctor?.first_name || ""
-      } ${doctor?.last_name || ""}`.trim();
+      const doctorName =
+        `${doctor?.title || "Dr"} ${doctor?.first_name || ""} ${doctor?.last_name || ""}`.trim();
 
       /**
-       * =================================
-       * VOICE RESPONSE
-       * =================================
+       * VOICE
        */
 
       if (channel === "VOICE") {
@@ -328,17 +432,15 @@ With ${doctorName}.
 
 For ${appointment.reason || "general consultation"}.
 
-On ${start.toLocaleDateString()}.
+On ${start?.toLocaleDateString()}.
 
-From ${start.toLocaleTimeString()} to ${end.toLocaleTimeString()}.
+From ${start?.toLocaleTimeString()} to ${end?.toLocaleTimeString()}.
 
 Status is ${String(appointment.status).toLowerCase().replaceAll("_", " ")}.`;
       }
 
       /**
-       * =================================
-       * WEB/TEXT RESPONSE
-       * =================================
+       * WEB
        */
 
       return `${index + 1}. ${doctorName}
@@ -347,13 +449,13 @@ Reason:
 ${appointment.reason || "General consultation"}
 
 Date:
-${start.toLocaleDateString()}
+${start?.toLocaleDateString()}
 
 Start Time:
-${start.toLocaleTimeString()}
+${start?.toLocaleTimeString()}
 
 End Time:
-${end.toLocaleTimeString()}
+${end?.toLocaleTimeString()}
 
 Status:
 ${appointment.status}
@@ -365,17 +467,27 @@ ${appointment.id}`;
 
   /**
    * =====================================
-   * FINAL RESPONSE
+   * RESET CONTEXT
    * =====================================
    */
-  resetConversationContext(conversation);
+
+  await resetConversationContext(conversation);
+
+  /**
+   * =====================================
+   * VOICE RESPONSE
+   * =====================================
+   */
+
   if (channel === "VOICE") {
     return {
       success: true,
 
-      reply: `You have ${appointments.length} upcoming appointment${
-        appointments.length > 1 ? "s" : ""
-      }.
+      appointments: filtered,
+
+      reply: `You have ${filtered.length} appointment${
+        filtered.length > 1 ? "s" : ""
+      } matching your request.
 
 ${lines.join("\n\n")}`,
     };
@@ -383,12 +495,14 @@ ${lines.join("\n\n")}`,
 
   /**
    * =====================================
-   * DEFAULT WEB RESPONSE
+   * WEB RESPONSE
    * =====================================
    */
 
   return {
     success: true,
+
+    appointments: filtered,
 
     reply: `Your appointments:
 

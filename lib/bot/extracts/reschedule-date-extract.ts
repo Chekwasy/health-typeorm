@@ -9,10 +9,6 @@ import * as chrono from "chrono-node";
 function normalizeDateTypos(message: string) {
   let text = message.toLowerCase();
 
-  /**
-   * COMMON TYPO FIXES
-   */
-
   const replacements: Record<string, string> = {
     tmrw: "tomorrow",
 
@@ -30,8 +26,6 @@ function normalizeDateTypos(message: string) {
 
     nxt: "next",
 
-    "this week": "next sunday",
-
     mon: "monday",
 
     tue: "tuesday",
@@ -48,10 +42,6 @@ function normalizeDateTypos(message: string) {
 
     sun: "sunday",
   };
-
-  /**
-   * APPLY FIXES
-   */
 
   for (const [wrong, correct] of Object.entries(replacements)) {
     const regex = new RegExp(`\\b${wrong}\\b`, "gi");
@@ -75,7 +65,7 @@ function normalizeDatePhrases(message: string) {
    * NEXT TOMORROW
    */
 
-  text = text.replace(/next tomorrow/gi, "in 2 day");
+  text = text.replace(/next tomorrow/gi, "in 2 days");
 
   /**
    * DAY AFTER TOMORROW
@@ -105,10 +95,6 @@ function normalizeDatePhrases(message: string) {
  */
 
 function extractDatePhrase(message: string) {
-  /**
-   * DATE PATTERNS
-   */
-
   const patterns = [
     /**
      * TODAY
@@ -129,6 +115,12 @@ function extractDatePhrase(message: string) {
      */
 
     /\bnext (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+
+    /**
+     * THIS MONDAY
+     */
+
+    /\bthis (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
 
     /**
      * WEEKDAY
@@ -158,12 +150,8 @@ function extractDatePhrase(message: string) {
      * SIMPLE DAY
      */
 
-    /\b([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?\b(?!\s?(am|pm|\:))/i,
+    /^(?:\s*)([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?(?:\s*)$/i,
   ];
-
-  /**
-   * FIND FIRST MATCH
-   */
 
   for (const pattern of patterns) {
     const match = message.match(pattern);
@@ -178,43 +166,13 @@ function extractDatePhrase(message: string) {
 
 /**
  * =========================================
- * NORMALIZE SIMPLE DAY
- * =========================================
- */
-
-function normalizeSimpleDay(phrase: string) {
-  const simpleDayMatch = phrase.match(
-    /^([1-9]|[12][0-9]|3[01])\s?(st|nd|rd|th)?$/i,
-  );
-
-  /**
-   * NOT SIMPLE
-   */
-
-  if (!simpleDayMatch) {
-    return phrase;
-  }
-
-  /**
-   * CURRENT DATE
-   */
-
-  const now = new Date();
-
-  const day = Number(simpleDayMatch[1]);
-
-  const month = now.toLocaleString("default", {
-    month: "long",
-  });
-
-  const year = now.getFullYear();
-
-  return `${day} ${month} ${year}`;
-}
-
-/**
- * =========================================
  * PARSE DATE PHRASE
+ * =========================================
+ *
+ * IMPORTANT:
+ * - NO CUSTOM REFERENCE DATE
+ * - USE CHRONO DEFAULT UTC/NOW
+ * - RETURN ONLY yyyy-MM-dd
  * =========================================
  */
 
@@ -228,16 +186,12 @@ function parseDatePhrase(phrase: string) {
   }
 
   /**
-   * NORMALIZE SIMPLE DAY
-   */
-
-  phrase = normalizeSimpleDay(phrase);
-
-  /**
    * PARSE
    */
 
-  const parsed = chrono.parse(phrase, new Date());
+  const parsed = chrono.parse(phrase, undefined, {
+    forwardDate: true,
+  });
 
   /**
    * FAILED
@@ -248,157 +202,113 @@ function parseDatePhrase(phrase: string) {
   }
 
   /**
-   * EXTRACT DATE
+   * START COMPONENTS
    */
 
-  const date = parsed[0].start.date();
+  const start = parsed[0].start;
 
   /**
-   * REMOVE TIME
+   * DEBUGGING
    */
 
-  date.setHours(0, 0, 0, 0);
+  console.log("CHRONO PARSED:", {
+    phrase,
 
-  return date;
+    refDate: parsed[0].refDate,
+
+    jsDate: start.date(),
+
+    iso: start.date().toISOString(),
+  });
+
+  /**
+   * IMPORTANT:
+   * USE PARSED COMPONENTS DIRECTLY
+   *
+   * Avoid:
+   * - timezone shifts
+   * - UTC conversion bugs
+   * - JS Date madness
+   */
+
+  const year = start.get("year");
+
+  const month = String(start.get("month")).padStart(2, "0");
+
+  const day = String(start.get("day")).padStart(2, "0");
+
+  /**
+   * RETURN DATE ONLY
+   */
+
+  return `${year}-${month}-${day}`;
 }
 
 /**
  * =========================================
  * EXTRACT RESCHEDULE DATES
  * =========================================
- *
- * Handles:
- *
- * - move my appointment from Wednesday to Friday
- * - move my booking from tomorrow evening to monday
- * - reschedule my friday appointment to sunday
- * - move my appointment to tomorrow
- *
- * Returns:
- * - from_date
- * - to_date
- * =========================================
  */
 
 export function extractRescheduleDates(rawMessage: string) {
   /**
-   * =====================================
    * NORMALIZATION
-   * =====================================
    */
 
   let normalized = normalizeDateTypos(rawMessage);
 
   normalized = normalizeDatePhrases(normalized);
 
-  /**
-   * =====================================
-   * LOWERCASE SAFE
-   * =====================================
-   */
-
   const message = normalized.toLowerCase();
 
   /**
-   * =====================================
    * DEFAULTS
-   * =====================================
    */
 
-  let from_date: Date | null = null;
+  let from_date: string | null = null;
 
-  let to_date: Date | null = null;
+  let to_date: string | null = null;
 
   /**
-   * =====================================
    * FROM SECTION
-   * =====================================
-   *
-   * Capture:
-   * - after "from"
-   * - after "my"
-   *
-   * Before:
-   * - "to"
-   * =====================================
    */
 
-  const fromSectionMatch = message.match(/\b(from|my)\b(.*?)\bto\b/i);
+  const fromSectionMatch = message.match(/\bfrom\s+(.+?)(?=\s+\bto\b|$)/i);
 
-  /**
-   * FROM SECTION FOUND
-   */
-
-  if (fromSectionMatch?.[2]) {
-    const fromSection = fromSectionMatch[2].trim();
-
-    /**
-     * EXTRACT DATE PHRASE
-     */
+  if (fromSectionMatch?.[1]) {
+    const fromSection = fromSectionMatch[1].trim();
 
     const fromPhrase = extractDatePhrase(fromSection);
-
-    /**
-     * PARSE
-     */
 
     from_date = parseDatePhrase(fromPhrase || "");
   }
 
   /**
-   * =====================================
    * TO SECTION
-   * =====================================
-   *
-   * Everything after:
-   * - to
-   * =====================================
    */
 
-  const toSectionMatch = message.match(/\bto\b(.*)$/i);
-
-  /**
-   * TO SECTION FOUND
-   */
+  const toSectionMatch = message.match(/\bto\s+(.+)$/i);
 
   if (toSectionMatch?.[1]) {
     const toSection = toSectionMatch[1].trim();
 
-    /**
-     * EXTRACT DATE PHRASE
-     */
-
     const toPhrase = extractDatePhrase(toSection);
-
-    /**
-     * PARSE
-     */
 
     to_date = parseDatePhrase(toPhrase || "");
   }
 
   /**
-   * =====================================
    * FALLBACK
-   * =====================================
-   *
-   * Example:
-   * "move my appointment to friday"
-   *
-   * No FROM exists.
-   * =====================================
    */
 
-  if (!to_date) {
+  if (!from_date && !to_date) {
     const generalPhrase = extractDatePhrase(message);
 
     to_date = parseDatePhrase(generalPhrase || "");
   }
 
   /**
-   * =====================================
    * LOGGING
-   * =====================================
    */
 
   console.log("RESCHEDULE DATE EXTRACTION", {
@@ -412,9 +322,7 @@ export function extractRescheduleDates(rawMessage: string) {
   });
 
   /**
-   * =====================================
    * RETURN
-   * =====================================
    */
 
   return {

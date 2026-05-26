@@ -6,74 +6,252 @@ import Cookies from "js-cookie";
 import toast from "react-hot-toast";
 import { useSelector } from "react-redux";
 
+/**
+ * =========================================
+ * SLOT TYPE
+ * =========================================
+ */
+
+interface Slot {
+  id: string;
+
+  doctor_id: string;
+
+  start_time: string;
+
+  end_time: string;
+
+  start_date?: string;
+
+  end_date?: string;
+
+  is_booked: boolean;
+}
+
+/**
+ * =========================================
+ * DOCTOR TYPE
+ * =========================================
+ */
+
+interface Doctor {
+  doctor_id: string;
+
+  name: string;
+
+  specialty?: string;
+
+  experience?: number;
+
+  bio?: string;
+
+  phone?: string;
+}
+
+/**
+ * =========================================
+ * DOCTOR SLOTS
+ * =========================================
+ */
+
 export default function DoctorSlots({ doctorId }: { doctorId: string }) {
+  /**
+   * =====================================
+   * REDUX USER
+   * =====================================
+   */
+
   const { me } = useSelector((state: any) => state.mainState) || {};
-  const [slots, setSlots] = useState<any[]>([]);
-  const [doctor, setDoctor] = useState<any>(null);
+
+  /**
+   * =====================================
+   * STATES
+   * =====================================
+   */
+
+  const [slots, setSlots] = useState<Slot[]>([]);
+
+  const [doctor, setDoctor] = useState<Doctor | null>(null);
 
   const [date, setDate] = useState("");
+
   const [page, setPage] = useState(1);
+
   const [totalPages, setTotalPages] = useState(0);
 
   const [loading, setLoading] = useState(false);
 
-  const [selectedSlot, setSelectedSlot] = useState<any>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
 
   const [reason, setReason] = useState("");
 
-  // FETCH SLOTS
+  /**
+   * =====================================
+   * FETCH SLOTS
+   * =====================================
+   */
+
   const fetchSlots = async () => {
     try {
       setLoading(true);
 
       const res = await axios.get(`/api/doctor/${doctorId}/slots`, {
-        params: { page, date },
+        params: {
+          page,
+
+          date,
+        },
       });
 
+      console.log("DOCTOR SLOTS RESPONSE", res.data);
+
       setSlots(res.data.slots || []);
+
       setDoctor(res.data.doctor || null);
+
       setTotalPages(res.data.pagination?.total_pages || 0);
-      toast.success(res.data.message || "Slots loaded");
+
+      setMessage(res.data.message || null);
     } catch (err) {
       console.error(err);
+
       setSlots([]);
+
       toast.error("Failed to load slots");
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * =====================================
+   * LOAD
+   * =====================================
+   */
+
   useEffect(() => {
-    if (doctorId) fetchSlots();
+    if (doctorId) {
+      fetchSlots();
+    }
   }, [doctorId, date, page]);
 
-  // BOOK SLOT
+  /**
+   * =====================================
+   * FORMAT DATE
+   * =====================================
+   */
+
+  const formatDate = (slot?: Slot | null) => {
+    if (!slot?.start_date) {
+      return "Unknown date";
+    }
+
+    return new Date(slot.start_date).toLocaleDateString([], {
+      weekday: "long",
+
+      year: "numeric",
+
+      month: "long",
+
+      day: "numeric",
+    });
+  };
+
+  /**
+   * =====================================
+   * FORMAT TIME
+   * =====================================
+   */
+
+  const formatTime = (slot?: Slot | null) => {
+    if (!slot?.start_date || !slot?.end_date) {
+      return "Invalid time";
+    }
+
+    const start = new Date(slot.start_date);
+
+    const end = new Date(slot.end_date);
+
+    return `${start.toLocaleTimeString([], {
+      hour: "2-digit",
+
+      minute: "2-digit",
+    })} - ${end.toLocaleTimeString([], {
+      hour: "2-digit",
+
+      minute: "2-digit",
+    })}`;
+  };
+
+  /**
+   * =====================================
+   * SLOT INTERVAL
+   * =====================================
+   */
+
+  const getInterval = (slot?: Slot | null) => {
+    if (!slot?.start_date || !slot?.end_date) {
+      return 0;
+    }
+
+    const start = new Date(slot.start_date);
+
+    const end = new Date(slot.end_date);
+
+    return (end.getTime() - start.getTime()) / (1000 * 60);
+  };
+
+  /**
+   * =====================================
+   * BOOK SLOT
+   * =====================================
+   */
+
   const handleBooking = async () => {
+    /**
+     * NO SLOT
+     */
+
     if (!selectedSlot) {
       toast.error("Please select a slot");
+
       return;
     }
 
+    /**
+     * INVALID REASON
+     */
+
     if (!reason || reason.length < 5) {
-      toast.error("Enter a valid reason");
+      toast.error("Enter a valid appointment reason");
+
       return;
     }
 
     try {
+      /**
+       * TOKEN
+       */
+
       const token = Cookies.get("access_token");
 
       if (!token) {
         toast.error("Unauthorized");
+
         return;
       }
 
       /**
-       * =====================================
-       * BOOK APPOINTMENT
-       * =====================================
+       * LOADING
        */
 
       const loadingToast = toast.loading("Booking appointment...");
+
+      /**
+       * BOOK APPOINTMENT
+       */
 
       const bookingRes = await axios.post(
         "/api/patient/appointments/book",
@@ -89,14 +267,16 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
         },
       );
 
+      /**
+       * SUCCESS
+       */
+
       toast.success(bookingRes.data?.message || "Appointment booked 🎉", {
         id: loadingToast,
       });
 
       /**
-       * =====================================
-       * FETCH ACTIVE PROVIDER
-       * =====================================
+       * FETCH PROVIDER
        */
 
       let provider = "MESSAGE_BIRD";
@@ -106,13 +286,11 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
 
         provider = providerRes.data?.provider || "MESSAGE_BIRD";
       } catch (err) {
-        console.error("Provider fetch failed:", err);
+        console.error("PROVIDER FETCH FAILED", err);
       }
 
       /**
-       * =====================================
-       * DETERMINE SEND ROUTE
-       * =====================================
+       * ENDPOINT
        */
 
       const sendEndpoint =
@@ -121,36 +299,22 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
           : "/api/whatsapp/messagebird/send";
 
       /**
-       * =====================================
-       * SEND WHATSAPP MESSAGE
-       * =====================================
+       * SEND NOTIFICATION
        */
 
       const notifyToast = toast.loading("Informing doctor on WhatsApp...");
 
       try {
         /**
-         * SLOT DETAILS
+         * DATE + TIME
          */
 
-        const start = new Date(selectedSlot.start_time);
+        const appointmentDate = formatDate(selectedSlot);
 
-        const end = new Date(selectedSlot.end_time);
-
-        const appointmentDate = start.toLocaleDateString();
-
-        const appointmentTime = `${start.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })} - ${end.toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}`;
+        const appointmentTime = formatTime(selectedSlot);
 
         /**
          * PATIENT NAME
-         *
-         * Comes from Redux user state
          */
 
         const patientName = me?.title
@@ -158,46 +322,29 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
           : `${me?.first_name || ""} ${me?.last_name || ""}`.trim();
 
         /**
-         * OPTIONAL
+         * HOSPITAL
          */
 
         const hospitalName = "Health Care";
 
         /**
-         * =====================================
-         * META TEMPLATE SEND
-         * =====================================
+         * META
          */
 
         if (provider === "META_WHATSAPP") {
           await axios.post(
             sendEndpoint,
             {
-              /**
-               * TEST MODE
-               */
               test: true,
 
               simulate_failure: false,
 
-              /**
-               * HOST / USER
-               */
               sendby: "HOST",
 
-              /**
-               * DESTINATION
-               */
               to: doctor?.phone || "+2348000000000",
 
-              /**
-               * META TEMPLATE
-               */
               template_name: "appointment_booking",
 
-              /**
-               * PLACEHOLDERS
-               */
               template_variables: {
                 doctor_name: doctor?.name || "Doctor",
 
@@ -220,10 +367,9 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
           );
         } else {
           /**
-           * =====================================
-           * MESSAGEBIRD TEXT SEND
-           * =====================================
+           * MESSAGEBIRD
            */
+
           await axios.post(
             sendEndpoint,
             {
@@ -237,23 +383,23 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
 
               message: `🏥 ${hospitalName}
 
-            Hello ${doctor?.name || "Doctor"},
+Hello ${doctor?.name || "Doctor"},
 
-            You have a new appointment booking.
+You have a new appointment booking.
 
-            👤 Patient:
-            ${patientName}
+👤 Patient:
+${patientName}
 
-            📝 Reason:
-            ${reason}
+📝 Reason:
+${reason}
 
-            📅 Date:
-            ${appointmentDate}
+📅 Date:
+${appointmentDate}
 
-            ⏰ Time:
-            ${appointmentTime}
+⏰ Time:
+${appointmentTime}
 
-            Please check your dashboard for more details.`,
+Please check your dashboard for more details.`,
             },
             {
               headers: {
@@ -276,7 +422,7 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
           },
         );
       } catch (err: any) {
-        console.error("WhatsApp send error:", err);
+        console.error("WHATSAPP SEND ERROR", err);
 
         toast.error(
           err?.response?.data?.message ||
@@ -288,9 +434,7 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
       }
 
       /**
-       * =====================================
-       * RESET STATE
-       * =====================================
+       * RESET
        */
 
       setSelectedSlot(null);
@@ -298,38 +442,62 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
       setReason("");
 
       /**
-       * REFRESH SLOTS
+       * REFRESH
        */
 
       fetchSlots();
     } catch (err: any) {
+      console.error("BOOKING ERROR", err);
+
       toast.error(err?.response?.data?.message || "Booking failed");
     }
   };
 
-  if (!doctorId) return null;
+  /**
+   * =====================================
+   * NO DOCTOR
+   * =====================================
+   */
+
+  if (!doctorId) {
+    return null;
+  }
+
+  /**
+   * =====================================
+   * UI
+   * =====================================
+   */
 
   return (
-    <div className="bg-white/10 p-6 rounded-xl text-white">
-      {/* DOCTOR INFO */}
+    <div className="bg-white/10 backdrop-blur-sm p-6 rounded-2xl text-white border border-white/10">
+      {/* DOCTOR */}
+
       {doctor && (
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold">{doctor.name}</h2>
-          <p className="text-gray-300 text-sm">
-            {doctor.specialty || "General"} • {doctor.experience || 0} yrs
+        <div className="mb-8">
+          <h2 className="text-3xl font-bold">{doctor.name}</h2>
+
+          <p className="text-gray-300 mt-1">
+            {doctor.specialty || "General"} • {doctor.experience || 0} years
             experience
           </p>
+
+          {doctor.bio && (
+            <p className="text-gray-400 mt-3 text-sm">{doctor.bio}</p>
+          )}
         </div>
       )}
 
       {/* FILTER */}
+
       <div className="flex gap-3 mb-6 flex-wrap">
         <input
           type="date"
-          className="p-2 rounded bg-white/20"
+          className="p-3 rounded-lg bg-white/20 border border-white/10"
           value={date}
           onChange={(e) => {
             setPage(1);
+
             setDate(e.target.value);
           }}
         />
@@ -337,91 +505,92 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
         <button
           onClick={() => {
             setDate("");
+
             setPage(1);
           }}
-          className="bg-gray-600 px-3 py-2 rounded"
+          className="bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 transition"
         >
           Reset
         </button>
       </div>
 
+      {/* MESSAGE */}
+
+      {message && (
+        <div className="mb-6 bg-yellow-500/20 border border-yellow-400 text-yellow-100 p-4 rounded-xl">
+          {message}
+        </div>
+      )}
+
       {/* LOADING */}
+
       {loading && <p className="text-gray-300">Loading slots...</p>}
 
       {/* EMPTY */}
+
       {!loading && slots.length === 0 && (
-        <div className="text-center bg-white/10 p-6 rounded">
+        <div className="text-center bg-white/10 p-6 rounded-xl">
           No available slots for this doctor.
         </div>
       )}
 
       {/* SLOTS */}
+
       {slots.length > 0 && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {slots.map((slot) => {
-              const start = new Date(slot.start_time);
-              const end = new Date(slot.end_time);
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {slots.map((slot) => (
+              <div
+                key={slot.id}
+                onClick={() => setSelectedSlot(slot)}
+                className={`p-5 rounded-2xl cursor-pointer border transition ${
+                  selectedSlot?.id === slot.id
+                    ? "bg-green-600 border-green-400"
+                    : "bg-white/10 border-white/10 hover:bg-white/20"
+                }`}
+              >
+                {/* DATE */}
 
-              const interval = (end.getTime() - start.getTime()) / (1000 * 60);
+                <p className="text-sm text-gray-300 mb-2">{formatDate(slot)}</p>
 
-              return (
-                <div
-                  key={slot.id}
-                  onClick={() => setSelectedSlot(slot)}
-                  className={`p-4 rounded cursor-pointer transition ${
-                    selectedSlot?.id === slot.id
-                      ? "bg-green-600"
-                      : "bg-white/10 hover:bg-white/20"
-                  }`}
-                >
-                  {/* DATE */}
-                  <p className="text-sm text-gray-300">
-                    {start.toLocaleDateString([], {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </p>
-                  {/* TIME */}
-                  <p className="font-semibold">
-                    {start.toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}{" "}
-                    -{" "}
-                    {end.toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
+                {/* TIME */}
 
-                  {/* INTERVAL */}
-                  <p className="text-sm text-gray-300">{interval} mins</p>
-                </div>
-              );
-            })}
+                <p className="font-semibold text-lg">{formatTime(slot)}</p>
+
+                {/* INTERVAL */}
+
+                <p className="text-sm text-gray-300 mt-2">
+                  {getInterval(slot)} mins
+                </p>
+
+                {/* RAW KEY */}
+
+                <p className="text-[10px] opacity-60 mt-3 break-all">
+                  {slot.start_time}
+                </p>
+              </div>
+            ))}
           </div>
 
           {/* PAGINATION */}
-          <div className="flex justify-center mt-6 gap-4">
+
+          <div className="flex justify-center mt-8 gap-4 items-center">
             <button
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
-              className="bg-gray-600 px-4 py-2 rounded disabled:opacity-50"
+              className="bg-gray-700 px-4 py-2 rounded-lg disabled:opacity-50"
             >
               Prev
             </button>
 
-            <span className="self-center">
+            <span className="text-sm text-gray-300">
               Page {page} / {totalPages || 1}
             </span>
 
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="bg-gray-600 px-4 py-2 rounded disabled:opacity-50"
+              className="bg-gray-700 px-4 py-2 rounded-lg disabled:opacity-50"
             >
               Next
             </button>
@@ -429,13 +598,24 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
         </>
       )}
 
-      {/* BOOKING FORM */}
+      {/* BOOK FORM */}
+
       {selectedSlot && (
-        <div className="mt-8 bg-white/10 p-4 rounded">
-          <h3 className="mb-3 font-semibold">Book Selected Slot</h3>
+        <div className="mt-10 bg-white/10 p-5 rounded-2xl border border-white/10">
+          <h3 className="font-bold text-xl mb-3">Book Selected Slot</h3>
+
+          <div className="mb-4 text-sm text-gray-300">
+            <p>
+              <strong>Date:</strong> {formatDate(selectedSlot)}
+            </p>
+
+            <p>
+              <strong>Time:</strong> {formatTime(selectedSlot)}
+            </p>
+          </div>
 
           <textarea
-            className="w-full p-3 rounded bg-white text-black mb-3"
+            className="w-full p-4 rounded-xl bg-white text-black mb-4 min-h-[120px]"
             placeholder="Enter reason for appointment..."
             value={reason}
             onChange={(e) => setReason(e.target.value)}
@@ -443,7 +623,7 @@ export default function DoctorSlots({ doctorId }: { doctorId: string }) {
 
           <button
             onClick={handleBooking}
-            className="w-full bg-green-600 py-3 rounded font-bold"
+            className="w-full bg-green-600 hover:bg-green-700 transition py-4 rounded-xl font-bold"
           >
             Confirm Booking
           </button>
