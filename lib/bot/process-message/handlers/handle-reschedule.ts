@@ -22,15 +22,6 @@ import { In } from "typeorm";
  * =========================================
  * CONVERT KEY TO DATE
  * =========================================
- *
- * INPUT:
- *
- * 2026-05-26-14-30
- *
- * OUTPUT:
- *
- * JS DATE
- * =========================================
  */
 
 function appointmentKeyToDate(key?: string | null) {
@@ -47,15 +38,6 @@ function appointmentKeyToDate(key?: string | null) {
  * =========================================
  * EXTRACT DATE FROM KEY
  * =========================================
- *
- * INPUT:
- *
- * 2026-05-26-14-30
- *
- * OUTPUT:
- *
- * 2026-05-26
- * =========================================
  */
 
 function extractDateFromKey(key?: string | null) {
@@ -69,15 +51,6 @@ function extractDateFromKey(key?: string | null) {
 /**
  * =========================================
  * EXTRACT TIME FROM KEY
- * =========================================
- *
- * INPUT:
- *
- * 2026-05-26-14-30
- *
- * OUTPUT:
- *
- * 14:30
  * =========================================
  */
 
@@ -112,13 +85,6 @@ function getTimePeriod(hour: number) {
 /**
  * =========================================
  * HANDLE RESCHEDULE APPOINTMENT
- * =========================================
- *
- * Updated:
- * - string datetime support
- * - no JS Date DB comparison
- * - frontend JS dates
- * - manual slot loading
  * =========================================
  */
 
@@ -285,7 +251,7 @@ export async function handleReschedule({
 
   /**
    * =====================================
-   * ATTACH SLOT MANUALLY
+   * ATTACH SLOT
    * =====================================
    */
 
@@ -309,7 +275,7 @@ export async function handleReschedule({
 
   /**
    * =====================================
-   * DEBUG APPOINTMENTS
+   * DEBUG
    * =====================================
    */
 
@@ -324,7 +290,11 @@ export async function handleReschedule({
 
       status: appointment.status,
 
+      reason: appointment.reason,
+
       slot_start: appointment.slot?.start_time,
+
+      slot_end: appointment.slot?.end_time,
     })),
   );
 
@@ -343,21 +313,13 @@ export async function handleReschedule({
 
   /**
    * =====================================
-   * ACTIVE FUTURE APPOINTMENTS
+   * FILTER ACTIVE + FUTURE
    * =====================================
    */
 
   let filteredAppointments = enrichedAppointments.filter((appointment) => {
-    /**
-     * ACTIVE
-     */
-
     const active =
       appointment.status === "CONFIRMED" || appointment.status === "PENDING";
-
-    /**
-     * FUTURE
-     */
 
     const slotDate = extractDateFromKey(appointment.slot.start_time);
 
@@ -401,7 +363,7 @@ export async function handleReschedule({
 
   /**
    * =====================================
-   * FILTER BY EXACT TIME
+   * FILTER BY TIME
    * =====================================
    */
 
@@ -412,12 +374,6 @@ export async function handleReschedule({
       return slotTime === context.from_appointment_time;
     });
   } else if (context.from_time_period) {
-    /**
-     * =================================
-     * FILTER BY TIME PERIOD
-     * =================================
-     */
-
     filteredAppointments = filteredAppointments.filter((appointment) => {
       const start = appointmentKeyToDate(appointment.slot.start_time);
 
@@ -504,6 +460,8 @@ ${options.join("\n\n")}`,
 
     slot_id: appointment.slot_id,
 
+    reason: appointment.reason,
+
     slot_start: appointment.slot?.start_time,
   });
 
@@ -519,7 +477,7 @@ ${options.join("\n\n")}`,
 
   /**
    * =====================================
-   * FIND AVAILABLE SLOT
+   * FIND TARGET SLOT
    * =====================================
    */
 
@@ -585,12 +543,6 @@ ${altText}`,
     },
   });
 
-  /**
-   * =====================================
-   * SLOT INVALID
-   * =====================================
-   */
-
   if (!freshSlot) {
     return {
       success: false,
@@ -601,7 +553,7 @@ ${altText}`,
 
   /**
    * =====================================
-   * SLOT BOOKED
+   * SLOT ALREADY BOOKED
    * =====================================
    */
 
@@ -615,15 +567,22 @@ ${altText}`,
 
   /**
    * =====================================
-   * CHECK CONFLICT
+   * PATIENT CONFLICT CHECK
    * =====================================
    */
 
-  const conflictingAppointment = filteredAppointments.find(
-    (item) => item.slot.start_time === freshSlot.start_time,
-  );
+  const patientConflict = enrichedAppointments.find((item) => {
+    if (item.status !== "CONFIRMED" && item.status !== "PENDING") {
+      return false;
+    }
 
-  if (conflictingAppointment) {
+    return (
+      item.slot.start_time === freshSlot.start_time &&
+      item.id !== appointment.id
+    );
+  });
+
+  if (patientConflict) {
     return {
       success: false,
 
@@ -662,12 +621,6 @@ ${altText}`,
     affected: cancelledAppointment.affected,
   });
 
-  /**
-   * =====================================
-   * FAILED CANCEL
-   * =====================================
-   */
-
   if (!cancelledAppointment.affected) {
     return {
       success: false,
@@ -696,6 +649,27 @@ ${altText}`,
 
     affected: releasedSlot.affected,
   });
+
+  if (!releasedSlot.affected) {
+    /**
+     * RESTORE APPOINTMENT
+     */
+
+    await appointmentRepo.update(
+      {
+        id: appointment.id,
+      },
+      {
+        status: oldStatus,
+      },
+    );
+
+    return {
+      success: false,
+
+      reply: "Failed to release previous slot.",
+    };
+  }
 
   /**
    * =====================================
@@ -769,12 +743,14 @@ ${altText}`,
 
     slot_id: freshSlot.id,
 
+    reason: appointment.reason || context.reason || "General consultation",
+
     status: "CONFIRMED",
   });
 
   /**
    * =====================================
-   * SAVE APPOINTMENT
+   * SAVE NEW APPOINTMENT
    * =====================================
    */
 
@@ -787,10 +763,12 @@ ${altText}`,
       appointment_id: savedAppointment?.id,
 
       slot_id: savedAppointment?.slot_id,
+
+      reason: savedAppointment?.reason,
     });
   } catch (err) {
     /**
-     * ROLLBACK SLOT
+     * ROLLBACK NEW SLOT
      */
 
     await slotRepo.update(
@@ -816,7 +794,7 @@ ${altText}`,
     );
 
     /**
-     * RESTORE APPOINTMENT
+     * RESTORE OLD APPOINTMENT
      */
 
     await appointmentRepo.update(
@@ -905,9 +883,9 @@ New appointment created:
 ✅ Success
 
 Doctor:
-${matchedDoctor?.title || "Dr"} ${matchedDoctor?.first_name} ${
-      matchedDoctor?.last_name
-    }
+${matchedDoctor?.title || "Dr"} ${
+      matchedDoctor?.first_name
+    } ${matchedDoctor?.last_name}
 
 New Date:
 ${start?.toLocaleDateString()}

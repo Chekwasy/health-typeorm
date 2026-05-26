@@ -7,6 +7,7 @@ import { Appointment } from "@/entities/Appointment";
 import { BotConversation } from "@/entities/BotConversation";
 
 import { resetConversationContext } from "../../helpers/reset-context";
+
 import { DoctorSlot } from "@/entities/DoctorSlot";
 
 /**
@@ -14,12 +15,8 @@ import { DoctorSlot } from "@/entities/DoctorSlot";
  * CONVERT KEY TO DATE
  * =========================================
  *
- * Converts:
- *
  * 2026-05-26-14-30
- *
  * ->
- *
  * JS Date
  * =========================================
  */
@@ -36,15 +33,11 @@ function appointmentKeyToDate(key?: string | null) {
 
 /**
  * =========================================
- * EXTRACT DATE FROM KEY
+ * EXTRACT DATE
  * =========================================
  *
- * INPUT:
- *
  * 2026-05-26-14-30
- *
- * OUTPUT:
- *
+ * ->
  * 2026-05-26
  * =========================================
  */
@@ -59,17 +52,54 @@ function extractDateFromKey(key?: string | null) {
 
 /**
  * =========================================
- * HANDLE VIEW APPOINTMENTS
+ * EXTRACT TIME
  * =========================================
  *
- * Updated:
- * - string datetime support
- * - no JS Date DB comparison
- * - frontend JS dates
- * - supports:
- *   - doctor filter
- *   - date filter
- *   - upcoming appointments
+ * 2026-05-26-14-30
+ * ->
+ * 14:30
+ * =========================================
+ */
+
+function extractTimeFromKey(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  return `${parts[3]}:${parts[4]}`;
+}
+
+/**
+ * =========================================
+ * GET TIME PERIOD
+ * =========================================
+ */
+
+function getTimePeriod(key?: string | null) {
+  if (!key) {
+    return null;
+  }
+
+  const parts = key.split("-");
+
+  const hour = Number(parts[3]);
+
+  if (hour < 12) {
+    return "morning";
+  }
+
+  if (hour < 17) {
+    return "afternoon";
+  }
+
+  return "evening";
+}
+
+/**
+ * =========================================
+ * HANDLE VIEW APPOINTMENTS
  * =========================================
  */
 
@@ -92,7 +122,7 @@ export async function handleView({
 }) {
   /**
    * =====================================
-   * ENSURE DB CONNECTION
+   * DB
    * =====================================
    */
 
@@ -108,12 +138,28 @@ export async function handleView({
 
   const profileRepo = dbClient.client.getRepository(Profile);
 
+  const slotRepo = dbClient.client.getRepository(DoctorSlot);
+
   /**
    * =====================================
-   * CURRENT DATE KEY
+   * TIME ONLY REQUIRES DATE
    * =====================================
-   *
-   * yyyy-MM-dd
+   */
+
+  if (context.appointment_time && !context.appointment_date) {
+    return {
+      success: false,
+
+      reply:
+        channel === "VOICE"
+          ? "Please mention the appointment date together with the time."
+          : "Please provide the appointment date for that time.",
+    };
+  }
+
+  /**
+   * =====================================
+   * TODAY KEY
    * =====================================
    */
 
@@ -126,11 +172,11 @@ export async function handleView({
 
   /**
    * =====================================
-   * FETCH APPOINTMENTS
+   * LOAD APPOINTMENTS
    * =====================================
    */
 
-  let appointments = await appointmentRepo.find({
+  const rawAppointments = await appointmentRepo.find({
     where: {
       patient_id: user_id,
     },
@@ -142,11 +188,11 @@ export async function handleView({
 
   /**
    * =====================================
-   * NO APPOINTMENTS
+   * EMPTY
    * =====================================
    */
 
-  if (!appointments.length) {
+  if (!rawAppointments.length) {
     await resetConversationContext(conversation);
 
     return {
@@ -154,28 +200,20 @@ export async function handleView({
 
       reply:
         channel === "VOICE"
-          ? "You currently do not have any upcoming appointments."
-          : "You currently have no upcoming appointments.",
+          ? "You currently do not have any appointments."
+          : "You currently have no appointments.",
     };
   }
 
   /**
    * =====================================
-   * LOAD ALL SLOT IDS
+   * SLOT IDS
    * =====================================
    */
 
-  const slotIds = appointments
+  const slotIds = rawAppointments
     .map((appointment) => appointment.slot_id)
     .filter(Boolean);
-
-  /**
-   * =====================================
-   * LOAD SLOT REPOSITORY
-   * =====================================
-   */
-
-  const slotRepo = dbClient.client.getRepository("DoctorSlot");
 
   /**
    * =====================================
@@ -191,13 +229,13 @@ export async function handleView({
 
   /**
    * =====================================
-   * ATTACH SLOT
+   * ENRICH APPOINTMENTS
    * =====================================
    */
 
-  const enrichedAppointments = appointments
+  const appointments = rawAppointments
     .map((appointment) => {
-      const slot = slots.find((s: any) => s.id === appointment.slot_id);
+      const slot = slots.find((s) => s.id === appointment.slot_id);
 
       if (!slot) {
         return null;
@@ -213,36 +251,22 @@ export async function handleView({
     slot: DoctorSlot;
   })[];
 
-  appointments = enrichedAppointments;
-
   /**
    * =====================================
-   * FILTER APPOINTMENTS
+   * FILTER
    * =====================================
    */
 
-  appointments = appointments.filter((appointment: any) => {
+  let filtered = appointments.filter((appointment) => {
     /**
-     * INVALID SLOT
+     * ACTIVE ONLY
      */
 
-    if (!appointment.slot) {
-      return false;
-    }
+    const activeStatuses = ["CONFIRMED", "PENDING"];
 
-    /**
-     * ALLOWED STATUS
-     */
+    const status = String(appointment.status).toUpperCase();
 
-    const allowedStatuses = ["CONFIRMED", "PENDING"];
-
-    const normalizedStatus = String(appointment.status).toUpperCase();
-
-    /**
-     * INVALID STATUS
-     */
-
-    if (!allowedStatuses.includes(normalizedStatus)) {
+    if (!activeStatuses.includes(status)) {
       return false;
     }
 
@@ -261,19 +285,77 @@ export async function handleView({
     }
 
     /**
-     * FILTER BY DATE
-     */
-
-    if (context.appointment_date && slotDate !== context.appointment_date) {
-      return false;
-    }
-
-    /**
-     * FILTER BY DOCTOR
+     * FILTER:
+     * DOCTOR
      */
 
     if (context.doctor_id && appointment.doctor_id !== context.doctor_id) {
       return false;
+    }
+
+    /**
+     * FILTER:
+     * DATE
+     */
+
+    /**
+     * =====================================
+     * NORMALIZE CONTEXT DATE
+     * =====================================
+     */
+
+    let targetDate: string | null = null;
+
+    if (context.appointment_date) {
+      /**
+       * JS DATE
+       */
+
+      if (context.appointment_date instanceof Date) {
+        targetDate = context.appointment_date.toISOString().split("T")[0];
+      } else if (typeof context.appointment_date === "string") {
+
+      /**
+       * ISO STRING
+       */
+        targetDate = context.appointment_date.split("T")[0];
+      }
+    }
+
+    /**
+     * =====================================
+     * FILTER BY DATE
+     * =====================================
+     */
+
+    if (targetDate && slotDate !== targetDate) {
+      return false;
+    }
+
+    /**
+     * FILTER:
+     * EXACT TIME
+     */
+
+    if (context.appointment_time) {
+      const slotTime = extractTimeFromKey(appointment.slot.start_time);
+
+      if (slotTime !== context.appointment_time) {
+        return false;
+      }
+    }
+
+    /**
+     * FILTER:
+     * TIME PERIOD
+     */
+
+    if (!context.appointment_time && context.time_period) {
+      const period = getTimePeriod(appointment.slot.start_time);
+
+      if (period !== context.time_period) {
+        return false;
+      }
     }
 
     return true;
@@ -281,21 +363,19 @@ export async function handleView({
 
   /**
    * =====================================
-   * SORT EARLIEST FIRST
+   * SORT
    * =====================================
    */
 
-  appointments.sort((a: any, b: any) =>
-    a.slot.start_time.localeCompare(b.slot.start_time),
-  );
+  filtered.sort((a, b) => a.slot.start_time.localeCompare(b.slot.start_time));
 
   /**
    * =====================================
-   * STILL EMPTY
+   * EMPTY AFTER FILTER
    * =====================================
    */
 
-  if (!appointments.length) {
+  if (!filtered.length) {
     await resetConversationContext(conversation);
 
     return {
@@ -303,8 +383,8 @@ export async function handleView({
 
       reply:
         channel === "VOICE"
-          ? "You currently do not have any upcoming appointments."
-          : "You currently have no upcoming appointments.",
+          ? "No appointments matched your request."
+          : "No appointments matched your request.",
     };
   }
 
@@ -315,9 +395,9 @@ export async function handleView({
    */
 
   const lines = await Promise.all(
-    appointments.map(async (appointment: any, index) => {
+    filtered.map(async (appointment, index) => {
       /**
-       * LOAD DOCTOR
+       * DOCTOR
        */
 
       const doctor = await profileRepo.findOne({
@@ -327,30 +407,19 @@ export async function handleView({
       });
 
       /**
-       * FRONTEND DATES
+       * DATES
        */
 
-      const start = appointmentKeyToDate(appointment.slot?.start_time);
+      const start = appointmentKeyToDate(appointment.slot.start_time);
 
-      const end = appointmentKeyToDate(appointment.slot?.end_time);
+      const end = appointmentKeyToDate(appointment.slot.end_time);
 
       /**
-       * DOCTOR NAME
+       * NAME
        */
 
-      const doctorName = `${doctor?.title || "Dr"} ${
-        doctor?.first_name || ""
-      } ${doctor?.last_name || ""}`.trim();
-
-      /**
-       * DEBUG
-       */
-
-      console.log("VIEW APPOINTMENT", {
-        appointment_id: appointment.id,
-
-        slot_start: appointment.slot?.start_time,
-      });
+      const doctorName =
+        `${doctor?.title || "Dr"} ${doctor?.first_name || ""} ${doctor?.last_name || ""}`.trim();
 
       /**
        * VOICE
@@ -414,11 +483,11 @@ ${appointment.id}`;
     return {
       success: true,
 
-      appointments,
+      appointments: filtered,
 
-      reply: `You have ${appointments.length} upcoming appointment${
-        appointments.length > 1 ? "s" : ""
-      }.
+      reply: `You have ${filtered.length} appointment${
+        filtered.length > 1 ? "s" : ""
+      } matching your request.
 
 ${lines.join("\n\n")}`,
     };
@@ -433,7 +502,7 @@ ${lines.join("\n\n")}`,
   return {
     success: true,
 
-    appointments,
+    appointments: filtered,
 
     reply: `Your appointments:
 

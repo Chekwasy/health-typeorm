@@ -6,18 +6,82 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import toast from "react-hot-toast";
 
+/**
+ * =========================================
+ * SLOT TYPE
+ * =========================================
+ */
+
+interface Slot {
+  id: string;
+
+  doctor_id: string;
+
+  start_time: string;
+
+  end_time: string;
+
+  start_date?: string;
+
+  end_date?: string;
+
+  is_booked: boolean;
+}
+
+/**
+ * =========================================
+ * DOCTOR TYPE
+ * =========================================
+ */
+
+interface Doctor {
+  doctor_id: string;
+
+  name: string;
+
+  specialty: string | null;
+
+  experience: number | null;
+
+  preview_slots: {
+    first: Slot[];
+
+    last: Slot[];
+  };
+}
+
+/**
+ * =========================================
+ * BOOK DOCTOR PAGE
+ * =========================================
+ */
+
 export default function BookDoctorPage() {
-  const [doctors, setDoctors] = useState<any[]>([]);
+  /**
+   * =====================================
+   * STATES
+   * =====================================
+   */
+
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+
   const [date, setDate] = useState("");
+
   const [page, setPage] = useState(1);
+
   const [totalPages, setTotalPages] = useState(0);
+
   const [loading, setLoading] = useState(false);
 
-  // NEW
   const [message, setMessage] = useState<string | null>(null);
 
-  const [selectedDoctorId, setSelectedDoctorId] =
-    useState<string | null>(null);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+
+  /**
+   * =====================================
+   * FETCH DOCTORS
+   * =====================================
+   */
 
   const fetchDoctors = async () => {
     try {
@@ -26,29 +90,78 @@ export default function BookDoctorPage() {
       const res = await axios.get("/api/doctor/available", {
         params: {
           page,
+
           date,
         },
       });
 
+      console.log("AVAILABLE DOCTORS", res.data);
+
       setDoctors(res.data.doctors || []);
+
       setTotalPages(res.data.pagination?.total_pages || 0);
 
-      // NEW: capture backend message
       setMessage(res.data.message || null);
-      toast.success(res.data.message || "Doctors loaded");
     } catch (err) {
       console.error(err);
+
       setDoctors([]);
+
       setMessage("Failed to load doctors");
+
       toast.error("Failed to load doctors");
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * =====================================
+   * LOAD
+   * =====================================
+   */
+
   useEffect(() => {
     fetchDoctors();
   }, [date, page]);
+
+  /**
+   * =====================================
+   * FORMAT SLOT TIME
+   * =====================================
+   */
+
+  const formatSlotTime = (slot?: Slot | null) => {
+    if (!slot?.start_date) {
+      return "Invalid time";
+    }
+
+    return new Date(slot.start_date).toLocaleTimeString([], {
+      hour: "2-digit",
+
+      minute: "2-digit",
+    });
+  };
+
+  /**
+   * =====================================
+   * FORMAT SLOT DATE
+   * =====================================
+   */
+
+  const formatSlotDate = (slot?: Slot | null) => {
+    if (!slot?.start_date) {
+      return "";
+    }
+
+    return new Date(slot.start_date).toLocaleDateString();
+  };
+
+  /**
+   * =====================================
+   * RENDER
+   * =====================================
+   */
 
   return (
     <div
@@ -60,17 +173,21 @@ export default function BookDoctorPage() {
     >
       <Nav />
 
-      <div className="pt-24 max-w-6xl mx-auto text-white px-4">
+      <div className="pt-24 max-w-6xl mx-auto text-white px-4 pb-20">
+        {/* TITLE */}
+
         <h1 className="text-3xl font-bold mb-6 text-center">
           Book an Appointment
         </h1>
+
+        {/* DOCTOR SLOTS */}
 
         {selectedDoctorId ? (
           <>
             <div className="mb-6 text-center">
               <button
                 onClick={() => setSelectedDoctorId(null)}
-                className="bg-gray-600 px-4 py-2 rounded hover:bg-gray-700 transition"
+                className="bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 transition"
               >
                 ← Back to Doctors
               </button>
@@ -81,13 +198,15 @@ export default function BookDoctorPage() {
         ) : (
           <>
             {/* FILTER */}
+
             <div className="flex justify-center gap-3 mb-6 flex-wrap">
               <input
                 type="date"
-                className="p-2 rounded bg-white/20"
+                className="p-3 rounded-lg bg-white/20 border border-white/10"
                 value={date}
                 onChange={(e) => {
                   setPage(1);
+
                   setDate(e.target.value);
                 }}
               />
@@ -95,110 +214,125 @@ export default function BookDoctorPage() {
               <button
                 onClick={() => {
                   setDate("");
+
                   setPage(1);
                 }}
-                className="bg-gray-600 px-3 py-2 rounded"
+                className="bg-gray-700 px-4 py-2 rounded-lg hover:bg-gray-600 transition"
               >
                 Reset
               </button>
             </div>
 
-            {/* MESSAGE FROM BACKEND */}
+            {/* MESSAGE */}
+
             {message && (
-              <div className="mb-6 text-center bg-yellow-500/20 border border-yellow-400 text-yellow-200 p-3 rounded">
+              <div className="mb-6 text-center bg-yellow-500/20 border border-yellow-400 text-yellow-100 p-4 rounded-xl">
                 {message}
               </div>
             )}
 
             {/* LOADING */}
+
             {loading && (
-              <p className="text-center text-gray-300">
-                Loading doctors...
-              </p>
+              <p className="text-center text-gray-300">Loading doctors...</p>
             )}
 
-            {/* EMPTY STATE */}
+            {/* EMPTY */}
+
             {!loading && doctors.length === 0 && (
-              <div className="text-center bg-white/10 p-8 rounded">
-                <h2 className="text-xl mb-2">
-                  No doctors available
-                </h2>
+              <div className="text-center bg-white/10 p-8 rounded-2xl border border-white/10">
+                <h2 className="text-xl mb-2">No doctors available</h2>
 
                 <p className="text-gray-300">
-                  {message ||
-                    "Try selecting another date or check back later."}
+                  {message || "Try another date or check again later."}
                 </p>
               </div>
             )}
 
             {/* DOCTORS */}
+
             {doctors.length > 0 && (
               <div className="grid md:grid-cols-2 gap-6">
-                {doctors.map((doc) => (
+                {doctors.map((doctor) => (
                   <div
-                    key={doc.doctor_id}
-                    onClick={() =>
-                      setSelectedDoctorId(doc.doctor_id)
-                    }
-                    className="bg-white/10 p-6 rounded-xl cursor-pointer hover:scale-[1.02] transition border border-transparent hover:border-green-500"
+                    key={doctor.doctor_id}
+                    onClick={() => setSelectedDoctorId(doctor.doctor_id)}
+                    className="bg-white/10 backdrop-blur-sm p-6 rounded-2xl cursor-pointer border border-white/10 hover:border-green-500 hover:scale-[1.01] transition"
                   >
+                    {/* NAME */}
+
                     <h2 className="text-xl font-semibold mb-2">
-                      {doc.name}
+                      {doctor.name}
                     </h2>
 
+                    {/* DETAILS */}
+
                     <p className="text-gray-300 text-sm">
-                      {doc.specialty || "General"} •{" "}
-                      {doc.experience || 0} yrs experience
+                      {doctor.specialty || "General"} • {doctor.experience || 0}{" "}
+                      yrs experience
                     </p>
 
-                    {/* EARLY */}
-                    <div className="mt-4">
-                      <p className="text-sm text-gray-400 mb-1">
-                        Early Slots:
-                      </p>
+                    {/* FIRST SLOT DATE */}
+
+                    {doctor.preview_slots.first?.[0] && (
+                      <div className="mt-3 text-sm text-green-300">
+                        Available from{" "}
+                        {formatSlotDate(doctor.preview_slots.first[0])}
+                      </div>
+                    )}
+
+                    {/* EARLY SLOTS */}
+
+                    <div className="mt-5">
+                      <p className="text-sm text-gray-400 mb-2">Early Slots</p>
 
                       <div className="flex gap-2 flex-wrap">
-                        {doc.preview_slots.first.map(
-                          (slot: any, i: number) => (
-                            <span
-                              key={i}
-                              className="bg-green-600 px-2 py-1 rounded text-xs"
+                        {doctor.preview_slots.first.map(
+                          (slot: Slot, index: number) => (
+                            <div
+                              key={index}
+                              className="bg-green-600/90 px-3 py-2 rounded-lg text-xs"
                             >
-                              {new Date(
-                                slot.start_time
-                              ).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          )
+                              <div>{formatSlotTime(slot)}</div>
+
+                              <div className="opacity-70 text-[10px] mt-1">
+                                {slot.start_time}
+                              </div>
+                            </div>
+                          ),
                         )}
                       </div>
                     </div>
 
-                    {/* LATE */}
-                    <div className="mt-3">
-                      <p className="text-sm text-gray-400 mb-1">
-                        Later Slots:
-                      </p>
+                    {/* LATE SLOTS */}
+
+                    <div className="mt-5">
+                      <p className="text-sm text-gray-400 mb-2">Later Slots</p>
 
                       <div className="flex gap-2 flex-wrap">
-                        {doc.preview_slots.last.map(
-                          (slot: any, i: number) => (
-                            <span
-                              key={i}
-                              className="bg-blue-600 px-2 py-1 rounded text-xs"
+                        {doctor.preview_slots.last.map(
+                          (slot: Slot, index: number) => (
+                            <div
+                              key={index}
+                              className="bg-blue-600/90 px-3 py-2 rounded-lg text-xs"
                             >
-                              {new Date(
-                                slot.start_time
-                              ).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          )
+                              <div>{formatSlotTime(slot)}</div>
+
+                              <div className="opacity-70 text-[10px] mt-1">
+                                {slot.start_time}
+                              </div>
+                            </div>
+                          ),
                         )}
                       </div>
+                    </div>
+
+                    {/* CTA */}
+
+                    <div className="mt-6">
+                      <button className="w-full bg-white text-black font-semibold py-3 rounded-xl hover:bg-gray-200 transition">
+                        View Available Slots
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -206,24 +340,25 @@ export default function BookDoctorPage() {
             )}
 
             {/* PAGINATION */}
+
             {doctors.length > 0 && (
-              <div className="flex justify-center mt-8 gap-4">
+              <div className="flex justify-center items-center mt-10 gap-4">
                 <button
                   disabled={page <= 1}
                   onClick={() => setPage((p) => p - 1)}
-                  className="bg-gray-600 px-4 py-2 rounded disabled:opacity-50"
+                  className="bg-gray-700 px-4 py-2 rounded-lg disabled:opacity-50"
                 >
                   Prev
                 </button>
 
-                <span className="self-center">
+                <span className="text-sm text-gray-300">
                   Page {page} / {totalPages || 1}
                 </span>
 
                 <button
                   disabled={page >= totalPages}
                   onClick={() => setPage((p) => p + 1)}
-                  className="bg-gray-600 px-4 py-2 rounded disabled:opacity-50"
+                  className="bg-gray-700 px-4 py-2 rounded-lg disabled:opacity-50"
                 >
                   Next
                 </button>

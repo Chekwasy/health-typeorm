@@ -39,14 +39,55 @@ function appointmentKeyToDate(key?: string | null) {
 
 /**
  * =========================================
+ * NORMALIZE DATE
+ * =========================================
+ *
+ * Converts:
+ *
+ * 2026-05-27T10:41:02.177Z
+ *
+ * ->
+ *
+ * 2026-05-27
+ * =========================================
+ */
+
+function normalizeAppointmentDate(value?: string | Date | null) {
+  if (!value) {
+    return null;
+  }
+
+  /**
+   * DATE OBJECT
+   */
+
+  if (value instanceof Date) {
+    return value.toISOString().split("T")[0];
+  }
+
+  /**
+   * ISO STRING
+   */
+
+  if (typeof value === "string") {
+    return value.split("T")[0];
+  }
+
+  return null;
+}
+
+/**
+ * =========================================
  * HANDLE CANCEL APPOINTMENT
  * =========================================
  *
  * Updated:
- * - string datetime support
+ * - uses ONLY appointment_date
+ * - uses ONLY appointment_time
+ * - supports time_period fallback
+ * - supports DB string datetime
  * - frontend JS dates
- * - slot key support
- * - no DB Date usage
+ * - no JS Date DB comparison
  * =========================================
  */
 
@@ -121,6 +162,8 @@ export async function handleCancel({
        */
 
       if (result.success) {
+        await resetConversationContext(conversation);
+
         return {
           success: true,
 
@@ -144,16 +187,38 @@ export async function handleCancel({
 
   /**
    * =====================================
+   * NORMALIZE DATE
+   * =====================================
+   */
+
+  const normalizedAppointmentDate = normalizeAppointmentDate(
+    context.appointment_date,
+  );
+
+  /**
+   * =====================================
+   * DEBUG DATE
+   * =====================================
+   */
+
+  console.log("NORMALIZED CANCEL DATE", {
+    raw: context.appointment_date,
+
+    normalizedAppointmentDate,
+  });
+
+  /**
+   * =====================================
    * VOICE FOLLOWUPS
    * =====================================
    */
 
   if (channel === "VOICE") {
     /**
-     * BOTH MISSING
+     * DATE + TIME MISSING
      */
 
-    if (!context.appointment_date && !context.appointment_time) {
+    if (!normalizedAppointmentDate && !context.appointment_time) {
       return {
         success: false,
 
@@ -166,7 +231,7 @@ export async function handleCancel({
      * DATE MISSING
      */
 
-    if (!context.appointment_date) {
+    if (!normalizedAppointmentDate) {
       return {
         success: false,
 
@@ -197,7 +262,7 @@ export async function handleCancel({
     !context.doctor_id &&
     !context.doctor_name &&
     !context.specialization &&
-    !context.appointment_date
+    !normalizedAppointmentDate
   ) {
     return {
       success: false,
@@ -241,15 +306,71 @@ export async function handleCancel({
    * =====================================
    */
 
-  const matches = await findAppointmentForCancellation({
+  let matches = await findAppointmentForCancellation({
     patient_id: user_id,
 
     doctor_id: doctor?.id,
 
-    appointment_date: context.appointment_date,
+    appointment_date: normalizedAppointmentDate,
 
     appointment_time: context.appointment_time,
   });
+
+  /**
+   * =====================================
+   * FILTER BY TIME PERIOD
+   * =====================================
+   *
+   * Used ONLY when:
+   *
+   * - appointment_time missing
+   * - time_period exists
+   * =====================================
+   */
+
+  if (!context.appointment_time && context.time_period) {
+    matches = matches.filter((appointment) => {
+      const key = appointment.slot?.start_time;
+
+      if (!key) {
+        return false;
+      }
+
+      /**
+       * 2026-05-26-14-30
+       */
+
+      const parts = key.split("-");
+
+      const hour = Number(parts[3]);
+
+      /**
+       * MORNING
+       */
+
+      if (context.time_period === "morning") {
+        return hour >= 6 && hour < 12;
+      }
+
+      /**
+       * AFTERNOON
+       */
+
+      if (context.time_period === "afternoon") {
+        return hour >= 12 && hour < 17;
+      }
+
+      /**
+       * EVENING
+       */
+
+      if (context.time_period === "evening") {
+        return hour >= 17 && hour < 22;
+      }
+
+      return true;
+    });
+  }
 
   /**
    * =====================================
@@ -260,9 +381,19 @@ export async function handleCancel({
   console.log("CANCEL APPOINTMENT MATCHES", {
     total_matches: matches.length,
 
-    appointment_date: context.appointment_date,
+    appointment_date: normalizedAppointmentDate,
 
     appointment_time: context.appointment_time,
+
+    time_period: context.time_period,
+
+    matches: matches.map((m) => ({
+      id: m.id,
+
+      slot_id: m.slot_id,
+
+      slot_time: m.slot?.start_time,
+    })),
   });
 
   /**
@@ -272,10 +403,6 @@ export async function handleCancel({
    */
 
   if (!matches.length) {
-    /**
-     * VOICE
-     */
-
     if (channel === "VOICE") {
       return {
         success: false,
@@ -284,10 +411,6 @@ export async function handleCancel({
           "I could not find a matching appointment. Please mention the doctor, appointment date and time again.",
       };
     }
-
-    /**
-     * WEB
-     */
 
     return {
       success: false,
